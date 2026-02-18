@@ -47,6 +47,7 @@ function App() {
   });
   const [selectedOrderId, setSelectedOrderId] = useState(null);
   const [selectedMixerId, setSelectedMixerId] = useState(MIXERS[0].id);
+  const [draggedOrderId, setDraggedOrderId] = useState(null);
   const [error, setError] = useState('');
 
   const openOrders = useMemo(() => orders.filter((o) => !o.mixerId), [orders]);
@@ -97,28 +98,47 @@ function App() {
     setForm((prev) => ({ ...prev, product: '', volumeLiters: '' }));
   };
 
-  const assignOrderToMixer = () => {
+  const assignOrderToMixerById = (orderId, mixerId) => {
     setError('');
-    if (!selectedOrderId) {
+    if (!orderId) {
       setError('Bitte zuerst einen offenen Abfüllauftrag auswählen.');
-      return;
+      return false;
     }
 
-    const order = orders.find((o) => o.id === selectedOrderId);
+    const order = orders.find((o) => o.id === orderId);
     if (!order || order.mixerId) {
       setError('Gewählter Auftrag ist nicht mehr offen.');
-      return;
+      return false;
     }
 
-    const mixerOrders = orders.filter((o) => o.mixerId === selectedMixerId);
+    const mixerOrders = orders.filter((o) => o.mixerId === mixerId);
     if (mixerOrders.some((existing) => overlaps(order, existing))) {
       setError('Zuweisung nicht möglich: Zeitblock überschneidet sich auf dem Rührwerk. Auftrag bleibt offen.');
-      return;
+      return false;
     }
 
     setOrders((prev) =>
-      prev.map((entry) => (entry.id === selectedOrderId ? { ...entry, mixerId: selectedMixerId } : entry))
+      prev.map((entry) => (entry.id === orderId ? { ...entry, mixerId } : entry))
     );
+    return true;
+  };
+
+  const assignOrderToMixer = () => {
+    assignOrderToMixerById(selectedOrderId, selectedMixerId);
+  };
+
+  const handleOrderDragStart = (event, orderId) => {
+    event.dataTransfer.setData('text/order-id', orderId);
+    setDraggedOrderId(orderId);
+  };
+
+  const handleMixerDrop = (event, mixerId) => {
+    event.preventDefault();
+    const orderId = event.dataTransfer.getData('text/order-id') || draggedOrderId;
+    const assigned = assignOrderToMixerById(orderId, mixerId);
+    if (assigned) {
+      setDraggedOrderId(null);
+    }
   };
 
   const rowsByLine = useMemo(
@@ -227,18 +247,23 @@ function App() {
 
       <section className="panel">
         <h2>Zeitstrahl Abfülllinien</h2>
-        <Timeline rows={rowsByLine} />
+        <Timeline rows={rowsByLine} onOrderDragStart={handleOrderDragStart} onOrderDragEnd={() => setDraggedOrderId(null)} />
       </section>
 
       <section className="panel">
         <h2>Zeitstrahl Rührwerke (Echtzeit-Update bei Zuweisung)</h2>
-        <Timeline rows={rowsByMixer} showUnassigned={false} />
+        <Timeline
+          rows={rowsByMixer}
+          showUnassigned={false}
+          onTrackDragOver={(event) => event.preventDefault()}
+          onTrackDrop={handleMixerDrop}
+        />
       </section>
     </div>
   );
 }
 
-function Timeline({ rows, showUnassigned = true }) {
+function Timeline({ rows, showUnassigned = true, onOrderDragStart, onOrderDragEnd, onTrackDragOver, onTrackDrop }) {
   return (
     <div className="timeline-wrapper">
       <div className="timeline-scale">
@@ -249,13 +274,22 @@ function Timeline({ rows, showUnassigned = true }) {
       {rows.map((row) => (
         <div className="timeline-row" key={row.id}>
           <div className="timeline-label">{row.name}</div>
-          <div className="timeline-track">
+          <div
+            className="timeline-track"
+            onDragOver={onTrackDragOver}
+            onDrop={onTrackDrop ? (event) => onTrackDrop(event, row.id) : undefined}
+          >
             {row.orders.map((order) => (
               <div
                 key={order.id}
                 className={`block ${order.mixerId ? 'assigned' : 'open'}`}
                 style={timelinePosition(order.start, order.end)}
                 title={`${order.product}\n${toHHMM(order.start)} - ${toHHMM(order.end)}\n${order.volumeLiters} L`}
+                draggable={Boolean(onOrderDragStart) && !order.mixerId}
+                onDragStart={
+                  onOrderDragStart && !order.mixerId ? (event) => onOrderDragStart(event, order.id) : undefined
+                }
+                onDragEnd={onOrderDragEnd}
               >
                 <span>{order.product}</span>
                 <small>{toHHMM(order.start)}-{toHHMM(order.end)}</small>
