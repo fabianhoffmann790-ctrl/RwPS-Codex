@@ -111,6 +111,7 @@ function App() {
       end,
       duration,
       mixerId: null,
+      isLocked: false,
     };
 
     setOrders((prev) => [...prev, newOrder].sort((a, b) => a.start - b.start));
@@ -129,6 +130,11 @@ function App() {
     const order = orders.find((o) => o.id === orderId);
     if (!order || order.mixerId) {
       setError('Gewählter Auftrag ist nicht mehr offen.');
+      return false;
+    }
+
+    if (order.isLocked) {
+      setError('Gesperrte Aufträge können nicht auf ein Rührwerk verschoben werden.');
       return false;
     }
 
@@ -163,6 +169,12 @@ function App() {
   };
 
   const handleOrderDragStart = (event, orderId) => {
+    const order = orders.find((entry) => entry.id === orderId);
+    if (!order || order.isLocked) {
+      event.preventDefault();
+      return;
+    }
+
     event.dataTransfer.setData('text/order-id', orderId);
     setMixerDropState(buildInitialDropState());
     setDraggedOrderId(orderId);
@@ -229,6 +241,12 @@ function App() {
   };
 
   const handleLineListDragStart = (event, orderId) => {
+    const order = orders.find((entry) => entry.id === orderId);
+    if (!order || order.isLocked) {
+      event.preventDefault();
+      return;
+    }
+
     event.dataTransfer.effectAllowed = 'move';
     event.dataTransfer.setData('text/order-id', orderId);
     setLineListDragState({ draggedOrderId: orderId, overOrderId: null });
@@ -254,7 +272,10 @@ function App() {
 
     setOrders((prev) => {
       const draggedOrder = prev.find((entry) => entry.id === draggedId);
-      if (!draggedOrder || draggedOrder.lineId !== lineId) return prev;
+      if (!draggedOrder || draggedOrder.lineId !== lineId || draggedOrder.isLocked) return prev;
+
+      const targetOrder = prev.find((entry) => entry.id === targetOrderId);
+      if (!targetOrder || targetOrder.isLocked) return prev;
 
       const lineOrders = prev.filter((entry) => entry.lineId === lineId).sort((a, b) => a.start - b.start);
       const reorderedLineOrders = reorderByIds(lineOrders, draggedId, targetOrderId);
@@ -294,6 +315,31 @@ function App() {
 
       return nextOrders;
     });
+  };
+
+  const deleteOrder = (orderId) => {
+    setOrders((prev) => prev.filter((entry) => entry.id !== orderId));
+    setSelectedOrderId((prev) => (prev === orderId ? null : prev));
+    setError('');
+  };
+
+  const unassignOrder = (orderId) => {
+    const targetOrder = orders.find((entry) => entry.id === orderId);
+    if (!targetOrder) return;
+    if (targetOrder.isLocked) {
+      setError('Gesperrte Aufträge können nicht vom Rührwerk gelöst werden.');
+      return;
+    }
+
+    setOrders((prev) => prev.map((entry) => (entry.id === orderId ? { ...entry, mixerId: null } : entry)));
+    setError('');
+  };
+
+  const toggleOrderLock = (orderId) => {
+    setOrders((prev) =>
+      prev.map((entry) => (entry.id === orderId ? { ...entry, isLocked: !entry.isLocked } : entry))
+    );
+    setError('');
   };
 
   const rowsByLine = useMemo(
@@ -373,6 +419,9 @@ function App() {
         <LineOrderLists
           rows={rowsByLine}
           dragState={lineListDragState}
+          onDelete={deleteOrder}
+          onUnassign={unassignOrder}
+          onToggleLock={toggleOrderLock}
           onDragStart={handleLineListDragStart}
           onDragOver={handleLineListDragOver}
           onDrop={handleLineListDrop}
@@ -434,7 +483,7 @@ function App() {
   );
 }
 
-function LineOrderLists({ rows, dragState, onDragStart, onDragOver, onDrop, onDragEnd }) {
+function LineOrderLists({ rows, dragState, onDelete, onUnassign, onToggleLock, onDragStart, onDragOver, onDrop, onDragEnd }) {
   return (
     <div className="line-lists-grid">
       {rows.map((row) => (
@@ -449,8 +498,8 @@ function LineOrderLists({ rows, dragState, onDragStart, onDragOver, onDrop, onDr
                 return (
                   <li
                     key={order.id}
-                    className={isTarget ? 'drop-target' : ''}
-                    draggable
+                    className={`${isTarget ? 'drop-target' : ''} ${order.isLocked ? 'locked' : ''}`.trim()}
+                    draggable={!order.isLocked}
                     onDragStart={(event) => onDragStart(event, order.id)}
                     onDragOver={(event) => onDragOver(event, order.id)}
                     onDrop={(event) => onDrop(event, row.id, order.id)}
@@ -462,6 +511,26 @@ function LineOrderLists({ rows, dragState, onDragStart, onDragOver, onDrop, onDr
                     <small>
                       {toHHMM(order.start)}-{toHHMM(order.end)} · {order.volumeLiters} L
                     </small>
+                    <div className="order-actions">
+                      <button type="button" title="Auftrag löschen" onClick={() => onDelete(order.id)}>
+                        🗑️
+                      </button>
+                      <button
+                        type="button"
+                        title="Zuweisung lösen"
+                        onClick={() => onUnassign(order.id)}
+                        disabled={!order.mixerId || order.isLocked}
+                      >
+                        ⛓️‍💥
+                      </button>
+                      <button
+                        type="button"
+                        title={order.isLocked ? 'Auftrag entsperren' : 'Auftrag sperren'}
+                        onClick={() => onToggleLock(order.id)}
+                      >
+                        {order.isLocked ? '🔒' : '🔓'}
+                      </button>
+                    </div>
                   </li>
                 );
               })}
