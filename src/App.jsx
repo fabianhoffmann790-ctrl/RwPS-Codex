@@ -37,6 +37,13 @@ function timelinePosition(start, end) {
   return { left: `${left}%`, width: `${Math.max(width, 0.8)}%` };
 }
 
+function buildInitialDropState() {
+  return MIXERS.reduce((acc, mixer) => {
+    acc[mixer.id] = { isDropActive: false, isInvalid: false, dragDepth: 0 };
+    return acc;
+  }, {});
+}
+
 function App() {
   const [orders, setOrders] = useState([]);
   const [form, setForm] = useState({
@@ -48,6 +55,7 @@ function App() {
   const [selectedOrderId, setSelectedOrderId] = useState(null);
   const [selectedMixerId, setSelectedMixerId] = useState(MIXERS[0].id);
   const [draggedOrderId, setDraggedOrderId] = useState(null);
+  const [mixerDropState, setMixerDropState] = useState(buildInitialDropState);
   const [error, setError] = useState('');
 
   const openOrders = useMemo(() => orders.filter((o) => !o.mixerId), [orders]);
@@ -128,18 +136,84 @@ function App() {
     tryAssignOrderToMixer(selectedOrderId, selectedMixerId);
   };
 
+  const resetDragState = () => {
+    setDraggedOrderId(null);
+    setMixerDropState(buildInitialDropState());
+  };
+
+  const isMixerDropInvalid = (orderId, mixerId) => {
+    if (!orderId) return false;
+    const order = orders.find((entry) => entry.id === orderId);
+    if (!order || order.mixerId) return false;
+
+    const mixerOrders = orders.filter((entry) => entry.mixerId === mixerId);
+    return mixerOrders.some((existing) => overlaps(order, existing));
+  };
+
   const handleOrderDragStart = (event, orderId) => {
     event.dataTransfer.setData('text/order-id', orderId);
+    setMixerDropState(buildInitialDropState());
     setDraggedOrderId(orderId);
+  };
+
+  const handleMixerDragEnter = (event, mixerId) => {
+    event.preventDefault();
+    setMixerDropState((prev) => {
+      const current = prev[mixerId];
+      const nextDepth = current.dragDepth + 1;
+      return {
+        ...prev,
+        [mixerId]: {
+          ...current,
+          dragDepth: nextDepth,
+          isDropActive: true,
+          isInvalid: isMixerDropInvalid(draggedOrderId, mixerId),
+        },
+      };
+    });
+  };
+
+  const handleMixerDragOver = (event, mixerId) => {
+    event.preventDefault();
+    setMixerDropState((prev) => {
+      const current = prev[mixerId];
+      const invalid = isMixerDropInvalid(draggedOrderId, mixerId);
+      if (current.isDropActive && current.isInvalid === invalid) {
+        return prev;
+      }
+      return {
+        ...prev,
+        [mixerId]: {
+          ...current,
+          isDropActive: true,
+          isInvalid: invalid,
+        },
+      };
+    });
+  };
+
+  const handleMixerDragLeave = (event, mixerId) => {
+    event.preventDefault();
+    setMixerDropState((prev) => {
+      const current = prev[mixerId];
+      const nextDepth = Math.max(0, current.dragDepth - 1);
+      return {
+        ...prev,
+        [mixerId]: {
+          ...current,
+          dragDepth: nextDepth,
+          isDropActive: nextDepth > 0,
+          isInvalid: nextDepth > 0 ? current.isInvalid : false,
+        },
+      };
+    });
   };
 
   const handleMixerDrop = (event, mixerId) => {
     event.preventDefault();
     const orderId = event.dataTransfer.getData('text/order-id') || draggedOrderId;
-    const assigned = tryAssignOrderToMixer(orderId, mixerId);
-    if (assigned) {
-      setDraggedOrderId(null);
-    }
+    tryAssignOrderToMixer(orderId, mixerId);
+    resetDragState();
   };
 
   const rowsByLine = useMemo(
@@ -248,7 +322,7 @@ function App() {
 
       <section className="panel">
         <h2>Zeitstrahl Abfülllinien</h2>
-        <Timeline rows={rowsByLine} onOrderDragStart={handleOrderDragStart} onOrderDragEnd={() => setDraggedOrderId(null)} />
+        <Timeline rows={rowsByLine} onOrderDragStart={handleOrderDragStart} onOrderDragEnd={resetDragState} />
       </section>
 
       <section className="panel">
@@ -256,15 +330,29 @@ function App() {
         <Timeline
           rows={rowsByMixer}
           showUnassigned={false}
-          onTrackDragOver={(event) => event.preventDefault()}
+          onTrackDragEnter={handleMixerDragEnter}
+          onTrackDragOver={handleMixerDragOver}
+          onTrackDragLeave={handleMixerDragLeave}
           onTrackDrop={handleMixerDrop}
+          trackState={mixerDropState}
         />
+        <p className="hint">Drop nicht möglich bei Zeitüberschneidung.</p>
       </section>
     </div>
   );
 }
 
-function Timeline({ rows, showUnassigned = true, onOrderDragStart, onOrderDragEnd, onTrackDragOver, onTrackDrop }) {
+function Timeline({
+  rows,
+  showUnassigned = true,
+  onOrderDragStart,
+  onOrderDragEnd,
+  onTrackDragEnter,
+  onTrackDragOver,
+  onTrackDragLeave,
+  onTrackDrop,
+  trackState = {},
+}) {
   return (
     <div className="timeline-wrapper">
       <div className="timeline-scale">
@@ -272,14 +360,21 @@ function Timeline({ rows, showUnassigned = true, onOrderDragStart, onOrderDragEn
           <span key={label}>{label}</span>
         ))}
       </div>
-      {rows.map((row) => (
-        <div className="timeline-row" key={row.id}>
-          <div className="timeline-label">{row.name}</div>
-          <div
-            className="timeline-track"
-            onDragOver={onTrackDragOver}
-            onDrop={onTrackDrop ? (event) => onTrackDrop(event, row.id) : undefined}
-          >
+      {rows.map((row) => {
+        const state = trackState[row.id] ?? { isDropActive: false, isInvalid: false };
+        const className = `timeline-track ${state.isDropActive ? 'drop-active' : ''} ${state.isDropActive && state.isInvalid ? 'drop-invalid' : ''}`.trim();
+
+        return (
+          <div className="timeline-row" key={row.id}>
+            <div className="timeline-label">{row.name}</div>
+            <div
+              className={className}
+              onDragEnter={onTrackDragEnter ? (event) => onTrackDragEnter(event, row.id) : undefined}
+              onDragOver={onTrackDragOver ? (event) => onTrackDragOver(event, row.id) : undefined}
+              onDragLeave={onTrackDragLeave ? (event) => onTrackDragLeave(event, row.id) : undefined}
+              onDrop={onTrackDrop ? (event) => onTrackDrop(event, row.id) : undefined}
+              title={state.isDropActive && state.isInvalid ? 'Drop nicht möglich bei Zeitüberschneidung' : undefined}
+            >
             {row.orders.map((order) => (
               <div
                 key={order.id}
@@ -297,9 +392,10 @@ function Timeline({ rows, showUnassigned = true, onOrderDragStart, onOrderDragEn
                 {showUnassigned && !order.mixerId ? <em>offen</em> : null}
               </div>
             ))}
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
