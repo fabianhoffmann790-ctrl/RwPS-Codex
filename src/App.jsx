@@ -98,8 +98,9 @@ function App() {
     setForm((prev) => ({ ...prev, product: '', volumeLiters: '' }));
   };
 
-  const assignOrderToMixerById = (orderId, mixerId) => {
+  const tryAssignOrderToMixer = (orderId, mixerId) => {
     setError('');
+
     if (!orderId) {
       setError('Bitte zuerst einen offenen Abfüllauftrag auswählen.');
       return false;
@@ -124,7 +125,7 @@ function App() {
   };
 
   const assignOrderToMixer = () => {
-    assignOrderToMixerById(selectedOrderId, selectedMixerId);
+    tryAssignOrderToMixer(selectedOrderId, selectedMixerId);
   };
 
   const handleOrderDragStart = (event, orderId) => {
@@ -135,7 +136,7 @@ function App() {
   const handleMixerDrop = (event, mixerId) => {
     event.preventDefault();
     const orderId = event.dataTransfer.getData('text/order-id') || draggedOrderId;
-    const assigned = assignOrderToMixerById(orderId, mixerId);
+    const assigned = tryAssignOrderToMixer(orderId, mixerId);
     if (assigned) {
       setDraggedOrderId(null);
     }
