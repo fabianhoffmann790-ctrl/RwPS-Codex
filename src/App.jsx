@@ -44,6 +44,17 @@ function buildInitialDropState() {
   }, {});
 }
 
+function reorderByIds(items, draggedId, targetId) {
+  const fromIndex = items.findIndex((item) => item.id === draggedId);
+  const toIndex = items.findIndex((item) => item.id === targetId);
+  if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) return items;
+
+  const next = [...items];
+  const [moved] = next.splice(fromIndex, 1);
+  next.splice(toIndex, 0, moved);
+  return next;
+}
+
 function App() {
   const [orders, setOrders] = useState([]);
   const [form, setForm] = useState({
@@ -56,6 +67,7 @@ function App() {
   const [selectedMixerId, setSelectedMixerId] = useState(MIXERS[0].id);
   const [draggedOrderId, setDraggedOrderId] = useState(null);
   const [mixerDropState, setMixerDropState] = useState(buildInitialDropState);
+  const [lineListDragState, setLineListDragState] = useState({ draggedOrderId: null, overOrderId: null });
   const [error, setError] = useState('');
 
   const openOrders = useMemo(() => orders.filter((o) => !o.mixerId), [orders]);
@@ -216,11 +228,79 @@ function App() {
     resetDragState();
   };
 
+  const handleLineListDragStart = (event, orderId) => {
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/order-id', orderId);
+    setLineListDragState({ draggedOrderId: orderId, overOrderId: null });
+    setError('');
+  };
+
+  const handleLineListDragOver = (event, overOrderId) => {
+    event.preventDefault();
+    setLineListDragState((prev) => (prev.overOrderId === overOrderId ? prev : { ...prev, overOrderId }));
+  };
+
+  const handleLineListDragEnd = () => {
+    setLineListDragState({ draggedOrderId: null, overOrderId: null });
+  };
+
+  const handleLineListDrop = (event, lineId, targetOrderId) => {
+    event.preventDefault();
+
+    const draggedId = event.dataTransfer.getData('text/order-id') || lineListDragState.draggedOrderId;
+    setLineListDragState({ draggedOrderId: null, overOrderId: null });
+
+    if (!draggedId || !targetOrderId || draggedId === targetOrderId) return;
+
+    setOrders((prev) => {
+      const draggedOrder = prev.find((entry) => entry.id === draggedId);
+      if (!draggedOrder || draggedOrder.lineId !== lineId) return prev;
+
+      const lineOrders = prev.filter((entry) => entry.lineId === lineId).sort((a, b) => a.start - b.start);
+      const reorderedLineOrders = reorderByIds(lineOrders, draggedId, targetOrderId);
+      if (reorderedLineOrders === lineOrders) return prev;
+
+      const anchorStart = lineOrders[0]?.start ?? 0;
+      let cursor = anchorStart;
+      const updatedLineOrders = reorderedLineOrders.map((entry) => {
+        const start = cursor;
+        const end = start + entry.duration;
+        cursor = end;
+        return { ...entry, start, end };
+      });
+
+      if (updatedLineOrders.some((entry) => entry.end > DAY_MINUTES)) {
+        setError('Reihenfolgeänderung nicht möglich: Tageszeitraum 00:00–24:00 würde überschritten.');
+        return prev;
+      }
+
+      const updatedById = new Map(updatedLineOrders.map((entry) => [entry.id, entry]));
+      const nextOrders = prev.map((entry) => updatedById.get(entry.id) ?? entry);
+
+      const hasMixerConflict = MIXERS.some((mixer) => {
+        const mixerOrders = nextOrders
+          .filter((entry) => entry.mixerId === mixer.id)
+          .sort((a, b) => a.start - b.start);
+        for (let i = 1; i < mixerOrders.length; i += 1) {
+          if (overlaps(mixerOrders[i - 1], mixerOrders[i])) return true;
+        }
+        return false;
+      });
+
+      if (hasMixerConflict) {
+        setError('Reihenfolgeänderung würde Überschneidungen auf einem Rührwerk verursachen und wurde verworfen.');
+        return prev;
+      }
+
+      return nextOrders;
+    });
+  };
+
   const rowsByLine = useMemo(
     () =>
       FILL_LINES.map((line) => ({
         ...line,
-        orders: orders.filter((o) => o.lineId === line.id),
+        orders: orders.filter((o) => o.lineId === line.id).sort((a, b) => a.start - b.start),
       })),
     [orders]
   );
@@ -289,6 +369,18 @@ function App() {
       </section>
 
       <section className="panel">
+        <h2>Auftragsliste je Abfülllinie (Drag & Drop Reihenfolge)</h2>
+        <LineOrderLists
+          rows={rowsByLine}
+          dragState={lineListDragState}
+          onDragStart={handleLineListDragStart}
+          onDragOver={handleLineListDragOver}
+          onDrop={handleLineListDrop}
+          onDragEnd={handleLineListDragEnd}
+        />
+      </section>
+
+      <section className="panel">
         <h2>Offenen Abfüllauftrag einem Rührwerk zuweisen</h2>
         <div className="assign-row">
           <label>
@@ -342,6 +434,45 @@ function App() {
   );
 }
 
+function LineOrderLists({ rows, dragState, onDragStart, onDragOver, onDrop, onDragEnd }) {
+  return (
+    <div className="line-lists-grid">
+      {rows.map((row) => (
+        <article key={row.id} className="line-list-card">
+          <h3>{row.name}</h3>
+          {row.orders.length === 0 ? (
+            <p className="hint">Keine Aufträge vorhanden.</p>
+          ) : (
+            <ul>
+              {row.orders.map((order, index) => {
+                const isTarget = dragState.overOrderId === order.id && dragState.draggedOrderId !== order.id;
+                return (
+                  <li
+                    key={order.id}
+                    className={isTarget ? 'drop-target' : ''}
+                    draggable
+                    onDragStart={(event) => onDragStart(event, order.id)}
+                    onDragOver={(event) => onDragOver(event, order.id)}
+                    onDrop={(event) => onDrop(event, row.id, order.id)}
+                    onDragEnd={onDragEnd}
+                  >
+                    <span>
+                      {index + 1}. {order.product}
+                    </span>
+                    <small>
+                      {toHHMM(order.start)}-{toHHMM(order.end)} · {order.volumeLiters} L
+                    </small>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </article>
+      ))}
+    </div>
+  );
+}
+
 function Timeline({
   rows,
   showUnassigned = true,
@@ -375,23 +506,25 @@ function Timeline({
               onDrop={onTrackDrop ? (event) => onTrackDrop(event, row.id) : undefined}
               title={state.isDropActive && state.isInvalid ? 'Drop nicht möglich bei Zeitüberschneidung' : undefined}
             >
-            {row.orders.map((order) => (
-              <div
-                key={order.id}
-                className={`block ${order.mixerId ? 'assigned' : 'open'}`}
-                style={timelinePosition(order.start, order.end)}
-                title={`${order.product}\n${toHHMM(order.start)} - ${toHHMM(order.end)}\n${order.volumeLiters} L`}
-                draggable={Boolean(onOrderDragStart) && !order.mixerId}
-                onDragStart={
-                  onOrderDragStart && !order.mixerId ? (event) => onOrderDragStart(event, order.id) : undefined
-                }
-                onDragEnd={onOrderDragEnd}
-              >
-                <span>{order.product}</span>
-                <small>{toHHMM(order.start)}-{toHHMM(order.end)}</small>
-                {showUnassigned && !order.mixerId ? <em>offen</em> : null}
-              </div>
-            ))}
+              {row.orders.map((order) => (
+                <div
+                  key={order.id}
+                  className={`block ${order.mixerId ? 'assigned' : 'open'}`}
+                  style={timelinePosition(order.start, order.end)}
+                  title={`${order.product}\n${toHHMM(order.start)} - ${toHHMM(order.end)}\n${order.volumeLiters} L`}
+                  draggable={Boolean(onOrderDragStart) && !order.mixerId}
+                  onDragStart={
+                    onOrderDragStart && !order.mixerId ? (event) => onOrderDragStart(event, order.id) : undefined
+                  }
+                  onDragEnd={onOrderDragEnd}
+                >
+                  <span>{order.product}</span>
+                  <small>
+                    {toHHMM(order.start)}-{toHHMM(order.end)}
+                  </small>
+                  {showUnassigned && !order.mixerId ? <em>offen</em> : null}
+                </div>
+              ))}
             </div>
           </div>
         );
