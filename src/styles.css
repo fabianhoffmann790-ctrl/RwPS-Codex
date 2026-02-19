@@ -89,6 +89,23 @@ button.danger {
   align-items: end;
 }
 
+.open-orders-dnd-source {
+  margin-bottom: 0.8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.open-order-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.open-order-chip {
+  cursor: grab;
+}
+
 .error {
   color: #b42318;
   margin-top: 0.8rem;
@@ -139,6 +156,11 @@ button.danger {
   border: 1px solid #dbe3ec;
   border-radius: 8px;
   background: #f8fafc;
+}
+
+.timeline-track.mixer-drop-active {
+  border-color: #1d4ed8;
+  background: #e8f0ff;
 }
 
 .block {
