@@ -297,4 +297,6 @@ button.danger {
 
 .block.line-order {
   background: #f08c00;
+  font-size: 0.66rem;
+  padding: 0 0.35rem;
 }
