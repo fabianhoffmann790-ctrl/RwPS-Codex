@@ -14,6 +14,12 @@ const MIXERS = Array.from({ length: 10 }, (_, index) => ({
 }));
 
 const BOTTLE_SIZES = ['0.25L', '0.5L', '1L', '5L'];
+const BOTTLE_SIZE_LABELS = {
+  '0.25L': '0,25L',
+  '0.5L': '0,5L',
+  '1L': '1L',
+  '5L': '5L',
+};
 const DEFAULT_FILL_RATE_BY_BOTTLE = {
   '0.25L': 12,
   '0.5L': 15,
@@ -231,6 +237,11 @@ function App() {
 
     if (!Number.isFinite(volume) || volume <= 0) {
       setPlanError('Bitte eine gültige Menge in Litern (>0) eingeben.');
+      return;
+    }
+
+    if (!BOTTLE_SIZES.includes(orderForm.bottleSize)) {
+      setPlanError('Bitte eine gültige Flaschengröße auswählen.');
       return;
     }
 
@@ -615,7 +626,7 @@ function App() {
                 >
                   {BOTTLE_SIZES.map((size) => (
                     <option key={size} value={size}>
-                      {size}
+                      {BOTTLE_SIZE_LABELS[size] ?? size}
                     </option>
                   ))}
                 </select>
@@ -703,7 +714,8 @@ function App() {
                               </div>
                             </div>
                             <small>
-                              {toHHMM(order.start)}-{toHHMM(order.end)} · {order.volumeLiters} L
+                              {toHHMM(order.start)}-{toHHMM(order.end)} · {order.volumeLiters} L · Flasche{' '}
+                              {BOTTLE_SIZE_LABELS[order.bottleSize] ?? order.bottleSize}
                             </small>
                           </li>
                         );
@@ -755,7 +767,7 @@ function App() {
                         {line.orders.map((order) => {
                           const isDropTarget =
                             lineTimelineDragState.overOrderId === order.id && lineTimelineDragState.draggedOrderId !== order.id;
-                          const lineOrderLabel = `${order.productName} · PA-Nr. ${order.productionOrderNumber} · ${order.volumeLiters} L`;
+                          const lineOrderLabel = `${order.productName} · PA-Nr. ${order.productionOrderNumber} · ${order.volumeLiters} L · ${BOTTLE_SIZE_LABELS[order.bottleSize] ?? order.bottleSize}`;
                           return (
                             <div
                               key={order.id}
@@ -870,7 +882,7 @@ function App() {
                                 left: `${(reservation.start / DAY_MINUTES) * 100}%`,
                                 width: `${((reservation.end - reservation.start) / DAY_MINUTES) * 100}%`,
                               }}
-                              title={`Auftrag ${reservation.orderId} · ${toHHMM(reservation.start)}-${toHHMM(reservation.end)}`}
+                              title={`Auftrag ${reservation.orderId} · ${relatedOrder?.productionOrderNumber ?? ''} · ${relatedOrder?.productName ?? ''} · ${BOTTLE_SIZE_LABELS[relatedOrder?.bottleSize] ?? relatedOrder?.bottleSize ?? '-'} · ${toHHMM(reservation.start)}-${toHHMM(reservation.end)}`}
                             >
                               {reservation.type === 'manufacturing' ? 'H' : 'A'}
                             </div>
@@ -892,6 +904,7 @@ function App() {
                   <th>PA-Nr.</th>
                   <th>Produkt</th>
                   <th>Menge</th>
+                  <th>Flaschengröße</th>
                   <th>Linie</th>
                   <th>Abfüllzeit</th>
                   <th>Herstellungsdauer</th>
@@ -913,6 +926,7 @@ function App() {
                     <td>{order.productionOrderNumber}</td>
                     <td>{order.productName}</td>
                     <td>{order.volumeLiters} L</td>
+                    <td>{BOTTLE_SIZE_LABELS[order.bottleSize] ?? order.bottleSize}</td>
                     <td>{order.lineId}</td>
                     <td>{order.fillDuration} min</td>
                     <td>{order.manufacturingDuration} min</td>
@@ -970,7 +984,7 @@ function App() {
                 })}
                 {orders.length === 0 ? (
                   <tr>
-                    <td colSpan="10">Noch keine Aufträge vorhanden.</td>
+                    <td colSpan="11">Noch keine Aufträge vorhanden.</td>
                   </tr>
                 ) : null}
               </tbody>
