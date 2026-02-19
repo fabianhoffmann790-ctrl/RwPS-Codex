@@ -648,6 +648,7 @@ function App() {
                         {line.orders.map((order) => {
                           const isDropTarget =
                             lineTimelineDragState.overOrderId === order.id && lineTimelineDragState.draggedOrderId !== order.id;
+                          const lineOrderLabel = `${order.productName} · PA-Nr. ${order.productionOrderNumber} · ${order.volumeLiters} L`;
                           return (
                             <div
                               key={order.id}
@@ -656,14 +657,14 @@ function App() {
                                 left: `${(order.start / DAY_MINUTES) * 100}%`,
                                 width: `${Math.max(((order.end - order.start) / DAY_MINUTES) * 100, 0.9)}%`,
                               }}
-                              title={`${order.productName} · ${toHHMM(order.start)}-${toHHMM(order.end)}`}
+                              title={`${lineOrderLabel} · ${toHHMM(order.start)}-${toHHMM(order.end)}`}
                               draggable
                               onDragStart={(event) => startLineTimelineDrag(event, order.id)}
                               onDragOver={(event) => onLineTimelineDragOver(event, order.id)}
                               onDrop={(event) => dropOnLineTimeline(event, line.id, order.id)}
                               onDragEnd={finishLineTimelineDrag}
                             >
-                              {order.productName}
+                              {lineOrderLabel}
                             </div>
                           );
                         })}
