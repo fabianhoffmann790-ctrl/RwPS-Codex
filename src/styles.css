@@ -166,3 +166,51 @@ button.danger {
   outline: 2px solid #b42318;
   outline-offset: 1px;
 }
+
+
+.line-lists-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 0.9rem;
+}
+
+.line-list-card {
+  border: 1px solid #d5dbe1;
+  border-radius: 8px;
+  padding: 0.75rem;
+  background: #f9fbfd;
+}
+
+.line-list-card h3 {
+  margin: 0 0 0.65rem;
+  font-size: 1rem;
+}
+
+.line-list-card ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.line-list-card li {
+  border: 1px solid #d5dbe1;
+  border-radius: 7px;
+  background: #fff;
+  padding: 0.45rem 0.6rem;
+  cursor: grab;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.drop-target {
+  outline: 2px dashed #1d4ed8;
+  outline-offset: 1px;
+}
+
+.block.line-order {
+  background: #f08c00;
+}
