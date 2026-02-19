@@ -1,9 +1,13 @@
 const STORAGE_KEY = 'rwps.products.v1';
 
 const DEFAULT_PRODUCTS = [
-  { id: crypto.randomUUID(), name: 'Produkt A', manufacturingDurationMin: 45 },
-  { id: crypto.randomUUID(), name: 'Produkt B', manufacturingDurationMin: 60 },
+  { id: crypto.randomUUID(), name: 'Produkt A', articleNumber: 'ART-001', manufacturingDurationMin: 45 },
+  { id: crypto.randomUUID(), name: 'Produkt B', articleNumber: 'ART-002', manufacturingDurationMin: 60 },
 ];
+
+function normalizeArticleNumber(value) {
+  return value.trim().toUpperCase();
+}
 
 function loadProducts() {
   const raw = localStorage.getItem(STORAGE_KEY);
@@ -18,11 +22,13 @@ function loadProducts() {
       .map((entry) => ({
         id: entry.id || crypto.randomUUID(),
         name: entry.name.trim(),
+        articleNumber: normalizeArticleNumber(String(entry.articleNumber ?? '')),
         manufacturingDurationMin: Number(entry.manufacturingDurationMin),
       }))
       .filter(
         (entry) =>
           entry.name.length > 0 &&
+          entry.articleNumber.length > 0 &&
           Number.isInteger(entry.manufacturingDurationMin) &&
           entry.manufacturingDurationMin > 0
       );
@@ -43,17 +49,23 @@ export async function getProducts() {
   return sortByName(loadProducts());
 }
 
-export async function createProduct({ name, manufacturingDurationMin }) {
+export async function createProduct({ name, articleNumber, manufacturingDurationMin }) {
   const products = loadProducts();
   const normalizedName = name.trim();
+  const normalizedArticleNumber = normalizeArticleNumber(articleNumber);
 
   if (products.some((entry) => entry.name.toLowerCase() === normalizedName.toLowerCase())) {
     throw new Error('Ein Produkt mit diesem Namen existiert bereits.');
   }
 
+  if (products.some((entry) => entry.articleNumber === normalizedArticleNumber)) {
+    throw new Error('Diese Artikelnummer ist bereits vergeben.');
+  }
+
   const next = {
     id: crypto.randomUUID(),
     name: normalizedName,
+    articleNumber: normalizedArticleNumber,
     manufacturingDurationMin,
   };
 
@@ -62,9 +74,10 @@ export async function createProduct({ name, manufacturingDurationMin }) {
   return next;
 }
 
-export async function updateProduct(id, { name, manufacturingDurationMin }) {
+export async function updateProduct(id, { name, articleNumber, manufacturingDurationMin }) {
   const products = loadProducts();
   const normalizedName = name.trim();
+  const normalizedArticleNumber = normalizeArticleNumber(articleNumber);
 
   if (
     products.some(
@@ -74,8 +87,14 @@ export async function updateProduct(id, { name, manufacturingDurationMin }) {
     throw new Error('Ein Produkt mit diesem Namen existiert bereits.');
   }
 
+  if (products.some((entry) => entry.id !== id && entry.articleNumber === normalizedArticleNumber)) {
+    throw new Error('Diese Artikelnummer ist bereits vergeben.');
+  }
+
   const updated = products.map((entry) =>
-    entry.id === id ? { ...entry, name: normalizedName, manufacturingDurationMin } : entry
+    entry.id === id
+      ? { ...entry, name: normalizedName, articleNumber: normalizedArticleNumber, manufacturingDurationMin }
+      : entry
   );
 
   persistProducts(updated);

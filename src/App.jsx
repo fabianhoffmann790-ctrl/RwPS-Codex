@@ -76,7 +76,7 @@ function App() {
   const [productError, setProductError] = useState('');
   const [editProductId, setEditProductId] = useState(null);
 
-  const [productForm, setProductForm] = useState({ name: '', manufacturingDurationMin: '' });
+  const [productForm, setProductForm] = useState({ name: '', articleNumber: '', manufacturingDurationMin: '' });
 
   const [orders, setOrders] = useState([]);
   const [mixerReservations, setMixerReservations] = useState([]);
@@ -87,6 +87,7 @@ function App() {
   const [orderForm, setOrderForm] = useState({
     productId: '',
     volumeLiters: '',
+    productionOrderNumber: '',
     lineId: FILL_LINES[0].id,
     startTime: '08:00',
   });
@@ -129,6 +130,10 @@ function App() {
       setProductError('Produktname ist erforderlich.');
       return;
     }
+    if (!productForm.articleNumber.trim()) {
+      setProductError('Artikelnummer ist erforderlich.');
+      return;
+    }
     if (!Number.isInteger(duration) || duration <= 0) {
       setProductError('Herstellungsdauer muss eine positive ganze Zahl sein.');
       return;
@@ -138,12 +143,17 @@ function App() {
       if (editProductId) {
         await updateProduct(editProductId, {
           name: productForm.name,
+          articleNumber: productForm.articleNumber,
           manufacturingDurationMin: duration,
         });
       } else {
-        await createProduct({ name: productForm.name, manufacturingDurationMin: duration });
+        await createProduct({
+          name: productForm.name,
+          articleNumber: productForm.articleNumber,
+          manufacturingDurationMin: duration,
+        });
       }
-      setProductForm({ name: '', manufacturingDurationMin: '' });
+      setProductForm({ name: '', articleNumber: '', manufacturingDurationMin: '' });
       setEditProductId(null);
       await reloadProducts();
     } catch (error) {
@@ -155,6 +165,7 @@ function App() {
     setEditProductId(product.id);
     setProductForm({
       name: product.name,
+      articleNumber: product.articleNumber,
       manufacturingDurationMin: String(product.manufacturingDurationMin),
     });
   };
@@ -187,6 +198,17 @@ function App() {
       setPlanError('Für das gewählte Produkt ist keine gültige Herstellungsdauer in den Stammdaten gepflegt.');
       return;
     }
+    if (!orderForm.productionOrderNumber.trim()) {
+      setPlanError('PA-Nr. ist erforderlich.');
+      return;
+    }
+
+    const normalizedProductionOrderNumber = orderForm.productionOrderNumber.trim().toUpperCase();
+    if (orders.some((entry) => entry.productionOrderNumber === normalizedProductionOrderNumber)) {
+      setPlanError('Diese PA-Nr. ist bereits vergeben.');
+      return;
+    }
+
     if (!Number.isFinite(volume) || volume <= 0) {
       setPlanError('Bitte eine gültige Menge in Litern (>0) eingeben.');
       return;
@@ -214,6 +236,7 @@ function App() {
       productId: product.id,
       productName: product.name,
       volumeLiters: volume,
+      productionOrderNumber: normalizedProductionOrderNumber,
       fillDuration,
       manufacturingDuration,
       lineId: orderForm.lineId,
@@ -223,7 +246,7 @@ function App() {
     };
 
     setOrders((prev) => [...prev, newOrder].sort((a, b) => a.start - b.start));
-    setOrderForm((prev) => ({ ...prev, volumeLiters: '' }));
+    setOrderForm((prev) => ({ ...prev, volumeLiters: '', productionOrderNumber: '' }));
     setSelectedOrderId(newOrder.id);
   };
 
@@ -492,10 +515,18 @@ function App() {
                   {products.length === 0 ? <option value="">Keine Produkte vorhanden</option> : null}
                   {products.map((product) => (
                     <option key={product.id} value={product.id}>
-                      {product.name}
+                      {product.name} ({product.articleNumber})
                     </option>
                   ))}
                 </select>
+              </label>
+              <label>
+                PA-Nr. (eindeutig)
+                <input
+                  value={orderForm.productionOrderNumber}
+                  onChange={(e) => setOrderForm((prev) => ({ ...prev, productionOrderNumber: e.target.value }))}
+                  placeholder="z. B. PA-2026-0001"
+                />
               </label>
               <label>
                 Menge (L)
@@ -660,7 +691,7 @@ function App() {
                       draggable
                       onDragStart={(event) => startOpenOrderDrag(event, order.id)}
                     >
-                      {order.productName} · {order.lineId} · {toHHMM(order.start)}-{toHHMM(order.end)}
+                      {order.productionOrderNumber} · {order.productName} · {order.lineId} · {toHHMM(order.start)}-{toHHMM(order.end)}
                     </button>
                   ))
                 )}
@@ -673,7 +704,7 @@ function App() {
                   <option value="">Bitte wählen</option>
                   {openOrders.map((order) => (
                     <option key={order.id} value={order.id}>
-                      {order.productName} · {order.lineId} · {toHHMM(order.start)}-{toHHMM(order.end)}
+                      {order.productionOrderNumber} · {order.productName} · {order.lineId} · {toHHMM(order.start)}-{toHHMM(order.end)}
                     </option>
                   ))}
                 </select>
@@ -746,6 +777,7 @@ function App() {
             <table className="data-table">
               <thead>
                 <tr>
+                  <th>PA-Nr.</th>
                   <th>Produkt</th>
                   <th>Menge</th>
                   <th>Linie</th>
@@ -766,6 +798,7 @@ function App() {
 
                   return (
                     <tr key={order.id}>
+                    <td>{order.productionOrderNumber}</td>
                     <td>{order.productName}</td>
                     <td>{order.volumeLiters} L</td>
                     <td>{order.lineId}</td>
@@ -812,7 +845,7 @@ function App() {
                 })}
                 {orders.length === 0 ? (
                   <tr>
-                    <td colSpan="9">Noch keine Aufträge vorhanden.</td>
+                    <td colSpan="10">Noch keine Aufträge vorhanden.</td>
                   </tr>
                 ) : null}
               </tbody>
@@ -829,6 +862,14 @@ function App() {
                 value={productForm.name}
                 onChange={(e) => setProductForm((prev) => ({ ...prev, name: e.target.value }))}
                 placeholder="z. B. Isodrink Orange"
+              />
+            </label>
+            <label>
+              Artikelnummer (eindeutig)
+              <input
+                value={productForm.articleNumber}
+                onChange={(e) => setProductForm((prev) => ({ ...prev, articleNumber: e.target.value }))}
+                placeholder="z. B. ART-4711"
               />
             </label>
             <label>
@@ -850,7 +891,7 @@ function App() {
                 className="secondary"
                 onClick={() => {
                   setEditProductId(null);
-                  setProductForm({ name: '', manufacturingDurationMin: '' });
+                  setProductForm({ name: '', articleNumber: '', manufacturingDurationMin: '' });
                   setProductError('');
                 }}
               >
@@ -864,6 +905,7 @@ function App() {
             <thead>
               <tr>
                 <th>Name</th>
+                <th>Artikelnummer</th>
                 <th>Herstellungsdauer</th>
                 <th>Aktionen</th>
               </tr>
@@ -872,6 +914,7 @@ function App() {
               {products.map((product) => (
                 <tr key={product.id}>
                   <td>{product.name}</td>
+                  <td>{product.articleNumber}</td>
                   <td>{product.manufacturingDurationMin} min</td>
                   <td>
                     <div className="actions">
