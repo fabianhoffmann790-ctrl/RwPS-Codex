@@ -31,6 +31,41 @@ function overlaps(a, b) {
   return a.start < b.end && b.start < a.end;
 }
 
+function createOrderBlock(order) {
+  return {
+    id: `order-${order.id}`,
+    mixerId: order.mixerId,
+    orderId: order.id,
+    start: order.start,
+    end: order.end,
+    type: 'order',
+  };
+}
+
+function findConflictingBlockIds(blocks) {
+  const conflicts = new Set();
+  const grouped = blocks.reduce((acc, block) => {
+    if (!block.mixerId) return acc;
+    if (!acc[block.mixerId]) acc[block.mixerId] = [];
+    acc[block.mixerId].push(block);
+    return acc;
+  }, {});
+
+  Object.values(grouped).forEach((mixerBlocks) => {
+    const sorted = mixerBlocks.toSorted((a, b) => a.start - b.start || a.end - b.end);
+    for (let index = 0; index < sorted.length - 1; index += 1) {
+      const current = sorted[index];
+      const next = sorted[index + 1];
+      if (overlaps(current, next)) {
+        conflicts.add(current.id);
+        conflicts.add(next.id);
+      }
+    }
+  });
+
+  return [...conflicts];
+}
+
 function App() {
   const [activeTab, setActiveTab] = useState('planung');
   const [products, setProducts] = useState([]);
@@ -41,6 +76,7 @@ function App() {
 
   const [orders, setOrders] = useState([]);
   const [mixerReservations, setMixerReservations] = useState([]);
+  const [conflictBlockIds, setConflictBlockIds] = useState([]);
   const [planError, setPlanError] = useState('');
   const [selectedOrderId, setSelectedOrderId] = useState('');
   const [selectedMixerId, setSelectedMixerId] = useState(MIXERS[0].id);
@@ -52,6 +88,13 @@ function App() {
   });
 
   const openOrders = useMemo(() => orders.filter((entry) => !entry.mixerId), [orders]);
+  const timelineBlocks = useMemo(
+    () => [
+      ...mixerReservations,
+      ...orders.filter((entry) => entry.mixerId).map((entry) => createOrderBlock(entry)),
+    ],
+    [mixerReservations, orders],
+  );
 
   useEffect(() => {
     getProducts().then((loaded) => {
@@ -178,6 +221,7 @@ function App() {
 
   const tryAssignOrderToMixer = () => {
     setPlanError('');
+    setConflictBlockIds([]);
     if (!selectedOrderId) {
       setPlanError('Bitte offenen Auftrag wählen.');
       return;
@@ -203,9 +247,9 @@ function App() {
       return;
     }
 
-    const mixerBlocks = mixerReservations.filter((entry) => entry.mixerId === selectedMixerId);
+    const mixerBlocks = timelineBlocks.filter((entry) => entry.mixerId === selectedMixerId);
     if (mixerBlocks.some((entry) => overlaps(manufacturingBlock, entry))) {
-      setPlanError('Zuweisung nicht möglich: Zeitüberschneidung auf dem Rührwerk.');
+      setPlanError('Zuweisung nicht möglich: Herstellungsblock kollidiert mit vorhandener Rührwerks-Reservierung.');
       return;
     }
 
@@ -215,17 +259,89 @@ function App() {
   };
 
   const unassignOrderFromMixer = (orderId) => {
+    setConflictBlockIds([]);
     setOrders((prev) => prev.map((entry) => (entry.id === orderId ? { ...entry, mixerId: null } : entry)));
     setMixerReservations((prev) => prev.filter((entry) => entry.orderId !== orderId));
   };
 
   const removeOrder = (orderId) => {
+    setConflictBlockIds([]);
     setOrders((prev) => prev.filter((entry) => entry.id !== orderId));
     setMixerReservations((prev) => prev.filter((entry) => entry.orderId !== orderId));
     if (selectedOrderId === orderId) {
       setSelectedOrderId('');
     }
   };
+
+  const handleLineListDrop = (lineId, movedOrderId, targetOrderId) => {
+    setPlanError('');
+    setConflictBlockIds([]);
+
+    setOrders((prevOrders) => {
+      const lineOrders = prevOrders.filter((entry) => entry.lineId === lineId).toSorted((a, b) => a.start - b.start);
+      const fromIndex = lineOrders.findIndex((entry) => entry.id === movedOrderId);
+      const toIndex = lineOrders.findIndex((entry) => entry.id === targetOrderId);
+
+      if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) {
+        return prevOrders;
+      }
+
+      const reorderedLineOrders = [...lineOrders];
+      const [movedOrder] = reorderedLineOrders.splice(fromIndex, 1);
+      reorderedLineOrders.splice(toIndex, 0, movedOrder);
+
+      const initialStart = lineOrders[0]?.start ?? 0;
+      let cursor = initialStart;
+      const recalculatedById = new Map();
+
+      reorderedLineOrders.forEach((entry) => {
+        const duration = entry.end - entry.start;
+        const recalculated = { ...entry, start: cursor, end: cursor + duration };
+        recalculatedById.set(entry.id, recalculated);
+        cursor = recalculated.end;
+      });
+
+      const nextOrders = prevOrders
+        .map((entry) => recalculatedById.get(entry.id) ?? entry)
+        .toSorted((a, b) => a.start - b.start);
+
+      const nextReservations = mixerReservations.map((reservation) => {
+        const order = recalculatedById.get(reservation.orderId);
+        if (!order || reservation.type !== 'manufacturing') return reservation;
+        return {
+          ...reservation,
+          start: order.start - order.manufacturingDuration,
+          end: order.start,
+        };
+      });
+
+      if (nextReservations.some((entry) => entry.start < 0)) {
+        setPlanError('Reihenfolge nicht möglich: Mindestens ein Herstellungsblock würde vor 00:00 Uhr liegen.');
+        return prevOrders;
+      }
+
+      const allBlocks = [...nextReservations, ...nextOrders.filter((entry) => entry.mixerId).map((entry) => createOrderBlock(entry))];
+      const conflicts = findConflictingBlockIds(allBlocks);
+      if (conflicts.length > 0) {
+        setPlanError('Reihenfolge zurückgesetzt: Herstellungsblock-Kollision mit bestehender Rührwerks-Reservierung erkannt.');
+        setConflictBlockIds(conflicts);
+        return prevOrders;
+      }
+
+      setMixerReservations(nextReservations);
+      return nextOrders;
+    });
+  };
+
+  const lineOrdersById = useMemo(
+    () =>
+      orders.reduce((acc, order) => {
+        if (!acc[order.lineId]) acc[order.lineId] = [];
+        acc[order.lineId].push(order);
+        return acc;
+      }, {}),
+    [orders],
+  );
 
   return (
     <div className="page">
@@ -350,19 +466,19 @@ function App() {
                 <div key={mixer.id} className="timeline-row">
                   <div className="timeline-label">{mixer.name}</div>
                   <div className="timeline-track">
-                    {mixerReservations
+                    {timelineBlocks
                       .filter((reservation) => reservation.mixerId === mixer.id)
                       .map((reservation) => (
                         <div
                           key={reservation.id}
-                          className={`block ${reservation.type}`}
+                          className={`block ${reservation.type} ${conflictBlockIds.includes(reservation.id) ? 'conflict' : ''}`}
                           style={{
                             left: `${(reservation.start / DAY_MINUTES) * 100}%`,
                             width: `${((reservation.end - reservation.start) / DAY_MINUTES) * 100}%`,
                           }}
                           title={`Auftrag ${reservation.orderId} · ${toHHMM(reservation.start)}-${toHHMM(reservation.end)}`}
                         >
-                          H
+                          {reservation.type === 'manufacturing' ? 'H' : 'A'}
                         </div>
                       ))}
                   </div>
@@ -383,12 +499,19 @@ function App() {
                   <th>Herstellungsdauer</th>
                   <th>Zeitraum</th>
                   <th>Rührwerk</th>
+                  <th>Reihenfolge</th>
                   <th>Aktionen</th>
                 </tr>
               </thead>
               <tbody>
-                {orders.map((order) => (
-                  <tr key={order.id}>
+                {orders.map((order) => {
+                  const lineOrders = lineOrdersById[order.lineId]?.toSorted((a, b) => a.start - b.start) ?? [];
+                  const currentIndex = lineOrders.findIndex((entry) => entry.id === order.id);
+                  const previousOrder = currentIndex > 0 ? lineOrders[currentIndex - 1] : null;
+                  const nextOrder = currentIndex < lineOrders.length - 1 ? lineOrders[currentIndex + 1] : null;
+
+                  return (
+                    <tr key={order.id}>
                     <td>{order.productName}</td>
                     <td>{order.volumeLiters} L</td>
                     <td>{order.lineId}</td>
@@ -398,6 +521,26 @@ function App() {
                       {toHHMM(order.start)}-{toHHMM(order.end)}
                     </td>
                     <td>{order.mixerId ?? 'offen'}</td>
+                    <td>
+                      <div className="actions">
+                        <button
+                          type="button"
+                          className="secondary"
+                          disabled={!previousOrder}
+                          onClick={() => previousOrder && handleLineListDrop(order.lineId, order.id, previousOrder.id)}
+                        >
+                          ↑
+                        </button>
+                        <button
+                          type="button"
+                          className="secondary"
+                          disabled={!nextOrder}
+                          onClick={() => nextOrder && handleLineListDrop(order.lineId, order.id, nextOrder.id)}
+                        >
+                          ↓
+                        </button>
+                      </div>
+                    </td>
                     <td>
                       <div className="actions">
                         {order.mixerId ? (
@@ -410,11 +553,12 @@ function App() {
                         </button>
                       </div>
                     </td>
-                  </tr>
-                ))}
+                    </tr>
+                  );
+                })}
                 {orders.length === 0 ? (
                   <tr>
-                    <td colSpan="8">Noch keine Aufträge vorhanden.</td>
+                    <td colSpan="9">Noch keine Aufträge vorhanden.</td>
                   </tr>
                 ) : null}
               </tbody>
