@@ -13,7 +13,13 @@ const MIXERS = Array.from({ length: 10 }, (_, index) => ({
   name: `Rührwerk ${index + 1}`,
 }));
 
-const FILL_RATE_L_PER_MIN = 30;
+const BOTTLE_SIZES = ['0.25L', '0.5L', '1L', '5L'];
+const DEFAULT_FILL_RATE_BY_BOTTLE = {
+  '0.25L': 12,
+  '0.5L': 15,
+  '1L': 30,
+  '5L': 45,
+};
 const DAY_MINUTES = 24 * 60;
 const TIMELINE_ZOOM_MIN = 1;
 const TIMELINE_ZOOM_MAX = 4;
@@ -94,10 +100,17 @@ function App() {
   const [orderForm, setOrderForm] = useState({
     productId: '',
     volumeLiters: '',
+    bottleSize: '1L',
     productionOrderNumber: '',
     lineId: FILL_LINES[0].id,
     startTime: '08:00',
   });
+  const [lineSettings] = useState(() =>
+    FILL_LINES.reduce((acc, line) => {
+      acc[line.id] = { ...DEFAULT_FILL_RATE_BY_BOTTLE };
+      return acc;
+    }, {}),
+  );
   const [lineListDragState, setLineListDragState] = useState({ draggedOrderId: null, overOrderId: null });
   const [lineTimelineDragState, setLineTimelineDragState] = useState({ draggedOrderId: null, overOrderId: null });
   const [mixerDropTargetId, setMixerDropTargetId] = useState(null);
@@ -221,7 +234,15 @@ function App() {
       return;
     }
 
-    const fillDuration = Math.ceil(volume / FILL_RATE_L_PER_MIN);
+    const selectedRate = Number(lineSettings?.[orderForm.lineId]?.[orderForm.bottleSize]);
+    if (!Number.isFinite(selectedRate) || selectedRate <= 0) {
+      setPlanError(
+        `Für Linie ${orderForm.lineId} und Flaschengröße ${orderForm.bottleSize} ist keine gültige Abfüllrate (>0 L/min) konfiguriert.`,
+      );
+      return;
+    }
+
+    const fillDuration = Math.ceil(volume / selectedRate);
     const manufacturingDuration = product.manufacturingDurationMin;
     const duration = Math.max(fillDuration, manufacturingDuration);
     const start = toMinutes(orderForm.startTime);
@@ -243,6 +264,7 @@ function App() {
       productId: product.id,
       productName: product.name,
       volumeLiters: volume,
+      bottleSize: orderForm.bottleSize,
       productionOrderNumber: normalizedProductionOrderNumber,
       fillDuration,
       manufacturingDuration,
@@ -586,6 +608,19 @@ function App() {
                 />
               </label>
               <label>
+                Flaschengröße
+                <select
+                  value={orderForm.bottleSize}
+                  onChange={(e) => setOrderForm((prev) => ({ ...prev, bottleSize: e.target.value }))}
+                >
+                  {BOTTLE_SIZES.map((size) => (
+                    <option key={size} value={size}>
+                      {size}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
                 Abfülllinie
                 <select
                   value={orderForm.lineId}
@@ -611,9 +646,9 @@ function App() {
               </button>
             </form>
             <p>
-              Hinweis: Die Abfüllzeit wird aus Menge / {FILL_RATE_L_PER_MIN} L/min berechnet. Die
-              Herstellungsdauer kommt aus den Produkt-Stammdaten. Für die Planung zählt jeweils der längere
-              Wert.
+              Hinweis: Die Abfüllzeit wird je Linie und Flaschengröße aus den konfigurierten L/min berechnet
+              (z. B. 1L = 30, 0.5L = 15). Die Herstellungsdauer kommt aus den Produkt-Stammdaten. Für die
+              Planung zählt jeweils der längere Wert.
             </p>
             {planError && <p className="error">{planError}</p>}
           </section>
