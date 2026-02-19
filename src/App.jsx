@@ -88,6 +88,7 @@ function App() {
   });
   const [lineListDragState, setLineListDragState] = useState({ draggedOrderId: null, overOrderId: null });
   const [lineTimelineDragState, setLineTimelineDragState] = useState({ draggedOrderId: null, overOrderId: null });
+  const [mixerDropTargetId, setMixerDropTargetId] = useState(null);
 
   const openOrders = useMemo(() => orders.filter((entry) => !entry.mixerId), [orders]);
   const timelineBlocks = useMemo(
@@ -221,23 +222,23 @@ function App() {
     setSelectedOrderId(newOrder.id);
   };
 
-  const tryAssignOrderToMixer = () => {
+  const assignOrderToMixerByDrop = (orderId, mixerId) => {
     setPlanError('');
     setConflictBlockIds([]);
-    if (!selectedOrderId) {
+    if (!orderId) {
       setPlanError('Bitte offenen Auftrag wählen.');
-      return;
+      return false;
     }
 
-    const order = orders.find((entry) => entry.id === selectedOrderId);
+    const order = orders.find((entry) => entry.id === orderId);
     if (!order || order.mixerId) {
       setPlanError('Gewählter Auftrag ist nicht mehr offen.');
-      return;
+      return false;
     }
 
     const manufacturingBlock = {
       id: crypto.randomUUID(),
-      mixerId: selectedMixerId,
+      mixerId,
       orderId: order.id,
       start: order.start - order.manufacturingDuration,
       end: order.start,
@@ -246,18 +247,23 @@ function App() {
 
     if (manufacturingBlock.start < 0) {
       setPlanError('Zuweisung nicht möglich: Herstellungszeitraum liegt vor 00:00 Uhr.');
-      return;
+      return false;
     }
 
-    const mixerBlocks = timelineBlocks.filter((entry) => entry.mixerId === selectedMixerId);
+    const mixerBlocks = timelineBlocks.filter((entry) => entry.mixerId === mixerId);
     if (mixerBlocks.some((entry) => overlaps(manufacturingBlock, entry))) {
       setPlanError('Zuweisung nicht möglich: Herstellungsblock kollidiert mit vorhandener Rührwerks-Reservierung.');
-      return;
+      return false;
     }
 
-    setOrders((prev) => prev.map((entry) => (entry.id === selectedOrderId ? { ...entry, mixerId: selectedMixerId } : entry)));
+    setOrders((prev) => prev.map((entry) => (entry.id === orderId ? { ...entry, mixerId } : entry)));
     setMixerReservations((prev) => [...prev, manufacturingBlock]);
     setSelectedOrderId('');
+    return true;
+  };
+
+  const tryAssignOrderToMixer = () => {
+    assignOrderToMixerByDrop(selectedOrderId, selectedMixerId);
   };
 
   const unassignOrderFromMixer = (orderId) => {
@@ -398,6 +404,28 @@ function App() {
     finishLineTimelineDrag();
     if (!movedOrderId || !targetOrderId || movedOrderId === targetOrderId) return;
     handleLineListDrop(lineId, movedOrderId, targetOrderId);
+  };
+
+  const startOpenOrderDrag = (event, orderId) => {
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/order-id', orderId);
+  };
+
+  const onMixerDragOver = (event, mixerId) => {
+    event.preventDefault();
+    setMixerDropTargetId(mixerId);
+  };
+
+  const onMixerDrop = (event, mixerId) => {
+    event.preventDefault();
+    const orderId = event.dataTransfer.getData('text/order-id');
+    setMixerDropTargetId(null);
+    if (!orderId) return;
+    assignOrderToMixerByDrop(orderId, mixerId);
+  };
+
+  const clearMixerDropTarget = () => {
+    setMixerDropTargetId(null);
   };
 
   return (
@@ -560,6 +588,26 @@ function App() {
 
           <section className="panel">
             <h2>Offenen Auftrag einem Rührwerk zuweisen</h2>
+            <div className="open-orders-dnd-source">
+              <strong>Draggable offene Aufträge:</strong>
+              <div className="open-order-chips">
+                {openOrders.length === 0 ? (
+                  <span>Keine offenen Aufträge.</span>
+                ) : (
+                  openOrders.map((order) => (
+                    <button
+                      key={order.id}
+                      type="button"
+                      className="secondary open-order-chip"
+                      draggable
+                      onDragStart={(event) => startOpenOrderDrag(event, order.id)}
+                    >
+                      {order.productName} · {order.lineId} · {toHHMM(order.start)}-{toHHMM(order.end)}
+                    </button>
+                  ))
+                )}
+              </div>
+            </div>
             <div className="assign-row">
               <label>
                 Offener Auftrag
@@ -594,7 +642,12 @@ function App() {
               {MIXERS.map((mixer) => (
                 <div key={mixer.id} className="timeline-row">
                   <div className="timeline-label">{mixer.name}</div>
-                  <div className="timeline-track">
+                  <div
+                    className={`timeline-track ${mixerDropTargetId === mixer.id ? 'mixer-drop-active' : ''}`}
+                    onDragOver={(event) => onMixerDragOver(event, mixer.id)}
+                    onDragLeave={clearMixerDropTarget}
+                    onDrop={(event) => onMixerDrop(event, mixer.id)}
+                  >
                     {timelineBlocks
                       .filter((reservation) => reservation.mixerId === mixer.id)
                       .map((reservation) => (
