@@ -238,12 +238,18 @@ button.danger {
   text-overflow: ellipsis;
 }
 
-.block.manufacturing {
-  background: #7c3aed;
+.block.manufacturing,
+.block.order,
+.block.line-order {
+  background: #f08c00;
 }
 
-.block.order {
-  background: #0f62fe;
+.block.locked {
+  background: #2f9e44;
+}
+
+.block.unassigned {
+  background: #adb5bd;
 }
 
 .block.conflict {
@@ -290,13 +296,42 @@ button.danger {
   gap: 0.3rem;
 }
 
+.line-list-card li.unassigned {
+  background: #eceff3;
+}
+
+.line-list-card li.assigned {
+  background: #ffe8cc;
+}
+
+.line-list-card li.locked {
+  background: #d3f9d8;
+}
+
+.line-order-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+}
+
+.mini-actions {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.mini-actions button {
+  font-size: 0.75rem;
+  padding: 0.15rem 0.35rem;
+  min-width: 1.8rem;
+}
+
 .drop-target {
   outline: 2px dashed #1d4ed8;
   outline-offset: 1px;
 }
 
 .block.line-order {
-  background: #f08c00;
   font-size: 0.66rem;
   padding: 0 0.35rem;
 }
