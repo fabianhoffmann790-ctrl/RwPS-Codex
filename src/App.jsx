@@ -119,15 +119,20 @@ function App() {
     setProductError('');
   };
 
-  const createOrder = (event) => {
+  const createOrder = async (event) => {
     event.preventDefault();
     setPlanError('');
 
-    const product = products.find((entry) => entry.id === orderForm.productId);
+    const loadedProducts = await getProducts();
+    const product = loadedProducts.find((entry) => entry.id === orderForm.productId);
     const volume = Number(orderForm.volumeLiters);
 
     if (!product) {
       setPlanError('Bitte zuerst ein Produkt in den Stammdaten anlegen.');
+      return;
+    }
+    if (!Number.isInteger(product.manufacturingDurationMin) || product.manufacturingDurationMin <= 0) {
+      setPlanError('Für das gewählte Produkt ist keine gültige Herstellungsdauer in den Stammdaten gepflegt.');
       return;
     }
     if (!Number.isFinite(volume) || volume <= 0) {
@@ -136,7 +141,8 @@ function App() {
     }
 
     const fillDuration = Math.ceil(volume / FILL_RATE_L_PER_MIN);
-    const duration = Math.max(fillDuration, product.manufacturingDurationMin);
+    const manufacturingDuration = product.manufacturingDurationMin;
+    const duration = Math.max(fillDuration, manufacturingDuration);
     const start = toMinutes(orderForm.startTime);
     const end = start + duration;
 
@@ -156,6 +162,8 @@ function App() {
       productId: product.id,
       productName: product.name,
       volumeLiters: volume,
+      fillDuration,
+      manufacturingDuration,
       lineId: orderForm.lineId,
       start,
       end,
@@ -270,6 +278,11 @@ function App() {
                 Auftrag hinzufügen
               </button>
             </form>
+            <p>
+              Hinweis: Die Abfüllzeit wird aus Menge / {FILL_RATE_L_PER_MIN} L/min berechnet. Die
+              Herstellungsdauer kommt aus den Produkt-Stammdaten. Für die Planung zählt jeweils der längere
+              Wert.
+            </p>
             {planError && <p className="error">{planError}</p>}
           </section>
 
@@ -311,6 +324,8 @@ function App() {
                   <th>Produkt</th>
                   <th>Menge</th>
                   <th>Linie</th>
+                  <th>Abfüllzeit</th>
+                  <th>Herstellungsdauer</th>
                   <th>Zeitraum</th>
                   <th>Rührwerk</th>
                 </tr>
@@ -321,6 +336,8 @@ function App() {
                     <td>{order.productName}</td>
                     <td>{order.volumeLiters} L</td>
                     <td>{order.lineId}</td>
+                    <td>{order.fillDuration} min</td>
+                    <td>{order.manufacturingDuration} min</td>
                     <td>
                       {toHHMM(order.start)}-{toHHMM(order.end)}
                     </td>
@@ -329,7 +346,7 @@ function App() {
                 ))}
                 {orders.length === 0 ? (
                   <tr>
-                    <td colSpan="5">Noch keine Aufträge vorhanden.</td>
+                    <td colSpan="7">Noch keine Aufträge vorhanden.</td>
                   </tr>
                 ) : null}
               </tbody>
