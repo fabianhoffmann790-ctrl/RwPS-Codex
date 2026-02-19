@@ -86,6 +86,8 @@ function App() {
     lineId: FILL_LINES[0].id,
     startTime: '08:00',
   });
+  const [lineListDragState, setLineListDragState] = useState({ draggedOrderId: null, overOrderId: null });
+  const [lineTimelineDragState, setLineTimelineDragState] = useState({ draggedOrderId: null, overOrderId: null });
 
   const openOrders = useMemo(() => orders.filter((entry) => !entry.mixerId), [orders]);
   const timelineBlocks = useMemo(
@@ -343,6 +345,61 @@ function App() {
     [orders],
   );
 
+  const rowsByLine = useMemo(
+    () =>
+      FILL_LINES.map((line) => ({
+        ...line,
+        orders: (lineOrdersById[line.id] ?? []).toSorted((a, b) => a.start - b.start),
+      })),
+    [lineOrdersById],
+  );
+
+  const startLineListDrag = (event, orderId) => {
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/order-id', orderId);
+    setLineListDragState({ draggedOrderId: orderId, overOrderId: null });
+  };
+
+  const onLineListDragOver = (event, overOrderId) => {
+    event.preventDefault();
+    setLineListDragState((prev) => (prev.overOrderId === overOrderId ? prev : { ...prev, overOrderId }));
+  };
+
+  const finishLineListDrag = () => {
+    setLineListDragState({ draggedOrderId: null, overOrderId: null });
+  };
+
+  const dropOnLineList = (event, lineId, targetOrderId) => {
+    event.preventDefault();
+    const movedOrderId = event.dataTransfer.getData('text/order-id') || lineListDragState.draggedOrderId;
+    finishLineListDrag();
+    if (!movedOrderId || !targetOrderId || movedOrderId === targetOrderId) return;
+    handleLineListDrop(lineId, movedOrderId, targetOrderId);
+  };
+
+  const startLineTimelineDrag = (event, orderId) => {
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/order-id', orderId);
+    setLineTimelineDragState({ draggedOrderId: orderId, overOrderId: null });
+  };
+
+  const onLineTimelineDragOver = (event, overOrderId) => {
+    event.preventDefault();
+    setLineTimelineDragState((prev) => (prev.overOrderId === overOrderId ? prev : { ...prev, overOrderId }));
+  };
+
+  const finishLineTimelineDrag = () => {
+    setLineTimelineDragState({ draggedOrderId: null, overOrderId: null });
+  };
+
+  const dropOnLineTimeline = (event, lineId, targetOrderId) => {
+    event.preventDefault();
+    const movedOrderId = event.dataTransfer.getData('text/order-id') || lineTimelineDragState.draggedOrderId;
+    finishLineTimelineDrag();
+    if (!movedOrderId || !targetOrderId || movedOrderId === targetOrderId) return;
+    handleLineListDrop(lineId, movedOrderId, targetOrderId);
+  };
+
   return (
     <div className="page">
       <header>
@@ -430,6 +487,78 @@ function App() {
           </section>
 
           <section className="panel">
+            <h2>Auftragsliste je Abfülllinie (Drag & Drop)</h2>
+            <div className="line-lists-grid">
+              {rowsByLine.map((line) => (
+                <article key={line.id} className="line-list-card">
+                  <h3>{line.name}</h3>
+                  {line.orders.length === 0 ? (
+                    <p>Keine Aufträge vorhanden.</p>
+                  ) : (
+                    <ul>
+                      {line.orders.map((order) => {
+                        const isDropTarget =
+                          lineListDragState.overOrderId === order.id && lineListDragState.draggedOrderId !== order.id;
+                        return (
+                          <li
+                            key={order.id}
+                            draggable
+                            className={isDropTarget ? 'drop-target' : ''}
+                            onDragStart={(event) => startLineListDrag(event, order.id)}
+                            onDragOver={(event) => onLineListDragOver(event, order.id)}
+                            onDrop={(event) => dropOnLineList(event, line.id, order.id)}
+                            onDragEnd={finishLineListDrag}
+                          >
+                            <span>{order.productName}</span>
+                            <small>
+                              {toHHMM(order.start)}-{toHHMM(order.end)} · {order.volumeLiters} L
+                            </small>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </article>
+              ))}
+            </div>
+          </section>
+
+          <section className="panel">
+            <h2>Zeitstrahl Abfülllinien (Drag & Drop Reihenfolge)</h2>
+            <div className="timeline-grid">
+              {rowsByLine.map((line) => (
+                <div key={line.id} className="timeline-row">
+                  <div className="timeline-label">{line.name}</div>
+                  <div className="timeline-track">
+                    {line.orders.map((order) => {
+                      const isDropTarget =
+                        lineTimelineDragState.overOrderId === order.id && lineTimelineDragState.draggedOrderId !== order.id;
+                      return (
+                        <div
+                          key={order.id}
+                          className={`block line-order ${isDropTarget ? 'drop-target' : ''}`}
+                          style={{
+                            left: `${(order.start / DAY_MINUTES) * 100}%`,
+                            width: `${Math.max(((order.end - order.start) / DAY_MINUTES) * 100, 0.9)}%`,
+                          }}
+                          title={`${order.productName} · ${toHHMM(order.start)}-${toHHMM(order.end)}`}
+                          draggable
+                          onDragStart={(event) => startLineTimelineDrag(event, order.id)}
+                          onDragOver={(event) => onLineTimelineDragOver(event, order.id)}
+                          onDrop={(event) => dropOnLineTimeline(event, line.id, order.id)}
+                          onDragEnd={finishLineTimelineDrag}
+                        >
+                          {order.productName}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className="panel">
             <h2>Offenen Auftrag einem Rührwerk zuweisen</h2>
             <div className="assign-row">
               <label>
@@ -460,7 +589,7 @@ function App() {
           </section>
 
           <section className="panel">
-            <h2>Zeitstrahl</h2>
+            <h2>Zeitstrahl Rührwerke</h2>
             <div className="timeline-grid">
               {MIXERS.map((mixer) => (
                 <div key={mixer.id} className="timeline-row">
