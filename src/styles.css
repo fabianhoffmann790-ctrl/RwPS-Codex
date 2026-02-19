@@ -139,6 +139,64 @@ button.danger {
   gap: 0.6rem;
 }
 
+.timeline-scroll {
+  overflow-x: auto;
+  padding-bottom: 0.2rem;
+}
+
+.timeline-scroll-inner {
+  min-width: 100%;
+}
+
+.timeline-zoom-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem;
+  margin-bottom: 0.8rem;
+}
+
+.timeline-zoom-controls input[type='range'] {
+  max-width: 220px;
+  flex: 1;
+}
+
+.timeline-scale-row {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  gap: 0.7rem;
+  margin-bottom: 0.35rem;
+}
+
+.timeline-scale-label {
+  font-size: 0.8rem;
+  color: #667085;
+}
+
+.timeline-scale-track {
+  position: relative;
+  height: 28px;
+}
+
+.timeline-scale-tick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: #cbd5e1;
+}
+
+.timeline-scale-tick span {
+  position: absolute;
+  top: 0;
+  left: 4px;
+  font-size: 0.72rem;
+  color: #667085;
+  white-space: nowrap;
+  background: #fff;
+  padding-left: 2px;
+}
+
 .timeline-row {
   display: grid;
   grid-template-columns: 140px 1fr;
@@ -174,6 +232,10 @@ button.danger {
   color: #fff;
   font-weight: 700;
   font-size: 0.72rem;
+  padding: 0 0.3rem;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .block.manufacturing {
