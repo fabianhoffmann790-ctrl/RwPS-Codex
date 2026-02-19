@@ -335,3 +335,8 @@ button.danger {
   font-size: 0.66rem;
   padding: 0 0.35rem;
 }
+
+.line-settings-table input {
+  width: 100%;
+  min-width: 90px;
+}
