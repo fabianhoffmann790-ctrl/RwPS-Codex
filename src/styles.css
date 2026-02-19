@@ -115,3 +115,45 @@ button.danger {
 .top-space {
   margin-top: 1rem;
 }
+
+.timeline-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.timeline-row {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  gap: 0.7rem;
+  align-items: center;
+}
+
+.timeline-label {
+  font-size: 0.9rem;
+}
+
+.timeline-track {
+  position: relative;
+  height: 28px;
+  border: 1px solid #dbe3ec;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.block {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.72rem;
+}
+
+.block.manufacturing {
+  background: #7c3aed;
+}

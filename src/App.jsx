@@ -40,6 +40,7 @@ function App() {
   const [productForm, setProductForm] = useState({ name: '', manufacturingDurationMin: '' });
 
   const [orders, setOrders] = useState([]);
+  const [mixerReservations, setMixerReservations] = useState([]);
   const [planError, setPlanError] = useState('');
   const [selectedOrderId, setSelectedOrderId] = useState('');
   const [selectedMixerId, setSelectedMixerId] = useState(MIXERS[0].id);
@@ -175,7 +176,7 @@ function App() {
     setSelectedOrderId(newOrder.id);
   };
 
-  const assignOrder = () => {
+  const tryAssignOrderToMixer = () => {
     setPlanError('');
     if (!selectedOrderId) {
       setPlanError('Bitte offenen Auftrag wählen.');
@@ -188,16 +189,42 @@ function App() {
       return;
     }
 
-    const mixerOrders = orders.filter((entry) => entry.mixerId === selectedMixerId);
-    if (mixerOrders.some((entry) => overlaps(order, entry))) {
+    const manufacturingBlock = {
+      id: crypto.randomUUID(),
+      mixerId: selectedMixerId,
+      orderId: order.id,
+      start: order.start - order.manufacturingDuration,
+      end: order.start,
+      type: 'manufacturing',
+    };
+
+    if (manufacturingBlock.start < 0) {
+      setPlanError('Zuweisung nicht möglich: Herstellungszeitraum liegt vor 00:00 Uhr.');
+      return;
+    }
+
+    const mixerBlocks = mixerReservations.filter((entry) => entry.mixerId === selectedMixerId);
+    if (mixerBlocks.some((entry) => overlaps(manufacturingBlock, entry))) {
       setPlanError('Zuweisung nicht möglich: Zeitüberschneidung auf dem Rührwerk.');
       return;
     }
 
-    setOrders((prev) =>
-      prev.map((entry) => (entry.id === selectedOrderId ? { ...entry, mixerId: selectedMixerId } : entry))
-    );
+    setOrders((prev) => prev.map((entry) => (entry.id === selectedOrderId ? { ...entry, mixerId: selectedMixerId } : entry)));
+    setMixerReservations((prev) => [...prev, manufacturingBlock]);
     setSelectedOrderId('');
+  };
+
+  const unassignOrderFromMixer = (orderId) => {
+    setOrders((prev) => prev.map((entry) => (entry.id === orderId ? { ...entry, mixerId: null } : entry)));
+    setMixerReservations((prev) => prev.filter((entry) => entry.orderId !== orderId));
+  };
+
+  const removeOrder = (orderId) => {
+    setOrders((prev) => prev.filter((entry) => entry.id !== orderId));
+    setMixerReservations((prev) => prev.filter((entry) => entry.orderId !== orderId));
+    if (selectedOrderId === orderId) {
+      setSelectedOrderId('');
+    }
   };
 
   return (
@@ -310,9 +337,37 @@ function App() {
                   ))}
                 </select>
               </label>
-              <button type="button" onClick={assignOrder}>
+              <button type="button" onClick={tryAssignOrderToMixer}>
                 Zuweisen
               </button>
+            </div>
+          </section>
+
+          <section className="panel">
+            <h2>Zeitstrahl</h2>
+            <div className="timeline-grid">
+              {MIXERS.map((mixer) => (
+                <div key={mixer.id} className="timeline-row">
+                  <div className="timeline-label">{mixer.name}</div>
+                  <div className="timeline-track">
+                    {mixerReservations
+                      .filter((reservation) => reservation.mixerId === mixer.id)
+                      .map((reservation) => (
+                        <div
+                          key={reservation.id}
+                          className={`block ${reservation.type}`}
+                          style={{
+                            left: `${(reservation.start / DAY_MINUTES) * 100}%`,
+                            width: `${((reservation.end - reservation.start) / DAY_MINUTES) * 100}%`,
+                          }}
+                          title={`Auftrag ${reservation.orderId} · ${toHHMM(reservation.start)}-${toHHMM(reservation.end)}`}
+                        >
+                          H
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              ))}
             </div>
           </section>
 
@@ -328,6 +383,7 @@ function App() {
                   <th>Herstellungsdauer</th>
                   <th>Zeitraum</th>
                   <th>Rührwerk</th>
+                  <th>Aktionen</th>
                 </tr>
               </thead>
               <tbody>
@@ -342,11 +398,23 @@ function App() {
                       {toHHMM(order.start)}-{toHHMM(order.end)}
                     </td>
                     <td>{order.mixerId ?? 'offen'}</td>
+                    <td>
+                      <div className="actions">
+                        {order.mixerId ? (
+                          <button type="button" className="secondary" onClick={() => unassignOrderFromMixer(order.id)}>
+                            Entkoppeln
+                          </button>
+                        ) : null}
+                        <button type="button" className="danger" onClick={() => removeOrder(order.id)}>
+                          Löschen
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                 ))}
                 {orders.length === 0 ? (
                   <tr>
-                    <td colSpan="7">Noch keine Aufträge vorhanden.</td>
+                    <td colSpan="8">Noch keine Aufträge vorhanden.</td>
                   </tr>
                 ) : null}
               </tbody>
