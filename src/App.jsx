@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createProduct, deleteProduct, getProducts, updateProduct } from './services/products';
+import { getLineSettings, saveLineSettings } from './services/lineSettings';
 
 const FILL_LINES = [
   { id: 'L1', name: 'Abfülllinie 1' },
@@ -89,6 +90,11 @@ function findConflictingBlockIds(blocks) {
   return [...conflicts];
 }
 
+function normalizeLineSettingsValue(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : NaN;
+}
+
 function App() {
   const [activeTab, setActiveTab] = useState('planung');
   const [products, setProducts] = useState([]);
@@ -111,12 +117,14 @@ function App() {
     lineId: FILL_LINES[0].id,
     startTime: '08:00',
   });
-  const [lineSettings] = useState(() =>
-    FILL_LINES.reduce((acc, line) => {
-      acc[line.id] = { ...DEFAULT_FILL_RATE_BY_BOTTLE };
-      return acc;
-    }, {}),
+  const [lineSettings, setLineSettings] = useState(() =>
+    getLineSettings(FILL_LINES, BOTTLE_SIZES, DEFAULT_FILL_RATE_BY_BOTTLE),
   );
+  const [lineSettingsDraft, setLineSettingsDraft] = useState(() =>
+    getLineSettings(FILL_LINES, BOTTLE_SIZES, DEFAULT_FILL_RATE_BY_BOTTLE),
+  );
+  const [lineSettingsError, setLineSettingsError] = useState('');
+  const [lineSettingsInfo, setLineSettingsInfo] = useState('');
   const [lineListDragState, setLineListDragState] = useState({ draggedOrderId: null, overOrderId: null });
   const [lineTimelineDragState, setLineTimelineDragState] = useState({ draggedOrderId: null, overOrderId: null });
   const [mixerDropTargetId, setMixerDropTargetId] = useState(null);
@@ -137,6 +145,10 @@ function App() {
       setOrderForm((prev) => ({ ...prev, productId: loaded[0]?.id ?? '' }));
     });
   }, []);
+
+  useEffect(() => {
+    setLineSettingsDraft(lineSettings);
+  }, [lineSettings]);
 
   const reloadProducts = async () => {
     const loaded = await getProducts();
@@ -289,6 +301,48 @@ function App() {
     setOrders((prev) => [...prev, newOrder].sort((a, b) => a.start - b.start));
     setOrderForm((prev) => ({ ...prev, volumeLiters: '', productionOrderNumber: '' }));
     setSelectedOrderId(newOrder.id);
+  };
+
+  const updateLineSettingsDraftValue = (lineId, bottleSize, rawValue) => {
+    setLineSettingsError('');
+    setLineSettingsInfo('');
+    setLineSettingsDraft((prev) => ({
+      ...prev,
+      [lineId]: {
+        ...prev[lineId],
+        [bottleSize]: rawValue,
+      },
+    }));
+  };
+
+  const onSaveLineSettings = async (event) => {
+    event.preventDefault();
+    setLineSettingsError('');
+    setLineSettingsInfo('');
+
+    const normalized = {};
+    for (const line of FILL_LINES) {
+      normalized[line.id] = {};
+      for (const bottleSize of BOTTLE_SIZES) {
+        const nextValue = normalizeLineSettingsValue(lineSettingsDraft?.[line.id]?.[bottleSize]);
+        if (!Number.isFinite(nextValue) || nextValue <= 0) {
+          setLineSettingsError(`Bitte für ${line.name} und ${BOTTLE_SIZE_LABELS[bottleSize]} einen gültigen Wert > 0 eingeben.`);
+          return;
+        }
+        normalized[line.id][bottleSize] = nextValue;
+      }
+    }
+
+    await saveLineSettings(normalized, FILL_LINES, BOTTLE_SIZES, DEFAULT_FILL_RATE_BY_BOTTLE);
+    setLineSettings(normalized);
+    setLineSettingsDraft(normalized);
+    setLineSettingsInfo('Linien-Einstellungen wurden gespeichert.');
+  };
+
+  const onResetLineSettingsDraft = () => {
+    setLineSettingsDraft(lineSettings);
+    setLineSettingsError('');
+    setLineSettingsInfo('Änderungen wurden zurückgesetzt.');
   };
 
   const assignOrderToMixer = (orderId, mixerId) => {
@@ -577,6 +631,13 @@ function App() {
           onClick={() => setActiveTab('stammdaten')}
         >
           Stammdaten
+        </button>
+        <button
+          type="button"
+          className={activeTab === 'linien-einstellung' ? 'tab-active' : ''}
+          onClick={() => setActiveTab('linien-einstellung')}
+        >
+          Linien-Einstellung
         </button>
       </nav>
 
@@ -991,6 +1052,49 @@ function App() {
             </table>
           </section>
         </>
+      ) : activeTab === 'linien-einstellung' ? (
+        <section className="panel">
+          <h2>Linien-Einstellung</h2>
+          <form onSubmit={onSaveLineSettings}>
+            <table className="data-table line-settings-table">
+              <thead>
+                <tr>
+                  <th>Abfülllinie</th>
+                  {BOTTLE_SIZES.map((size) => (
+                    <th key={size}>{BOTTLE_SIZE_LABELS[size] ?? size}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {FILL_LINES.map((line) => (
+                  <tr key={line.id}>
+                    <td>{line.name}</td>
+                    {BOTTLE_SIZES.map((size) => (
+                      <td key={size}>
+                        <input
+                          type="number"
+                          min="0.01"
+                          step="0.01"
+                          value={lineSettingsDraft?.[line.id]?.[size] ?? ''}
+                          onChange={(event) => updateLineSettingsDraftValue(line.id, size, event.target.value)}
+                          required
+                        />
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="actions top-space">
+              <button type="submit">Speichern</button>
+              <button type="button" className="secondary" onClick={onResetLineSettingsDraft}>
+                Zurücksetzen
+              </button>
+            </div>
+          </form>
+          {lineSettingsError ? <p className="error">{lineSettingsError}</p> : null}
+          {lineSettingsInfo ? <p>{lineSettingsInfo}</p> : null}
+        </section>
       ) : (
         <section className="panel">
           <h2>Stammdaten: Produkte</h2>
