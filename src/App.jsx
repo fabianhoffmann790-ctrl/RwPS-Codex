@@ -15,6 +15,10 @@ const MIXERS = Array.from({ length: 10 }, (_, index) => ({
 
 const FILL_RATE_L_PER_MIN = 30;
 const DAY_MINUTES = 24 * 60;
+const TIMELINE_ZOOM_MIN = 1;
+const TIMELINE_ZOOM_MAX = 4;
+const TIMELINE_ZOOM_STEP = 0.25;
+const TIMELINE_SCALE_TICK_MINUTES = 120;
 
 function toMinutes(timeHHMM) {
   const [hours, minutes] = timeHHMM.split(':').map(Number);
@@ -89,6 +93,7 @@ function App() {
   const [lineListDragState, setLineListDragState] = useState({ draggedOrderId: null, overOrderId: null });
   const [lineTimelineDragState, setLineTimelineDragState] = useState({ draggedOrderId: null, overOrderId: null });
   const [mixerDropTargetId, setMixerDropTargetId] = useState(null);
+  const [timelineZoom, setTimelineZoom] = useState(1);
 
   const openOrders = useMemo(() => orders.filter((entry) => !entry.mixerId), [orders]);
   const timelineBlocks = useMemo(
@@ -365,6 +370,22 @@ function App() {
     [lineOrdersById],
   );
 
+  const timelineScaleTicks = useMemo(() => {
+    const ticks = [];
+    for (let minute = 0; minute <= DAY_MINUTES; minute += TIMELINE_SCALE_TICK_MINUTES) {
+      ticks.push(minute);
+    }
+    if (ticks[ticks.length - 1] !== DAY_MINUTES) {
+      ticks.push(DAY_MINUTES);
+    }
+    return ticks;
+  }, []);
+
+  const updateTimelineZoom = (nextZoom) => {
+    const clamped = Math.min(TIMELINE_ZOOM_MAX, Math.max(TIMELINE_ZOOM_MIN, nextZoom));
+    setTimelineZoom(Number(clamped.toFixed(2)));
+  };
+
   const startLineListDrag = (event, orderId) => {
     event.dataTransfer.effectAllowed = 'move';
     event.dataTransfer.setData('text/order-id', orderId);
@@ -558,36 +579,68 @@ function App() {
 
           <section className="panel">
             <h2>Zeitstrahl Abfülllinien (Drag & Drop Reihenfolge)</h2>
-            <div className="timeline-grid">
-              {rowsByLine.map((line) => (
-                <div key={line.id} className="timeline-row">
-                  <div className="timeline-label">{line.name}</div>
-                  <div className="timeline-track">
-                    {line.orders.map((order) => {
-                      const isDropTarget =
-                        lineTimelineDragState.overOrderId === order.id && lineTimelineDragState.draggedOrderId !== order.id;
-                      return (
-                        <div
-                          key={order.id}
-                          className={`block line-order ${isDropTarget ? 'drop-target' : ''}`}
-                          style={{
-                            left: `${(order.start / DAY_MINUTES) * 100}%`,
-                            width: `${Math.max(((order.end - order.start) / DAY_MINUTES) * 100, 0.9)}%`,
-                          }}
-                          title={`${order.productName} · ${toHHMM(order.start)}-${toHHMM(order.end)}`}
-                          draggable
-                          onDragStart={(event) => startLineTimelineDrag(event, order.id)}
-                          onDragOver={(event) => onLineTimelineDragOver(event, order.id)}
-                          onDrop={(event) => dropOnLineTimeline(event, line.id, order.id)}
-                          onDragEnd={finishLineTimelineDrag}
-                        >
-                          {order.productName}
-                        </div>
-                      );
-                    })}
+            <div className="timeline-zoom-controls">
+              <strong>Zoom</strong>
+              <button type="button" className="secondary" onClick={() => updateTimelineZoom(timelineZoom - TIMELINE_ZOOM_STEP)}>
+                −
+              </button>
+              <input
+                type="range"
+                min={TIMELINE_ZOOM_MIN}
+                max={TIMELINE_ZOOM_MAX}
+                step={TIMELINE_ZOOM_STEP}
+                value={timelineZoom}
+                onChange={(event) => updateTimelineZoom(Number(event.target.value))}
+              />
+              <button type="button" className="secondary" onClick={() => updateTimelineZoom(timelineZoom + TIMELINE_ZOOM_STEP)}>
+                +
+              </button>
+              <span>{timelineZoom.toFixed(2)}x</span>
+            </div>
+            <div className="timeline-scroll">
+              <div className="timeline-scroll-inner" style={{ width: `${timelineZoom * 100}%` }}>
+                <div className="timeline-scale-row">
+                  <div className="timeline-scale-label">Skala</div>
+                  <div className="timeline-scale-track">
+                    {timelineScaleTicks.map((tick) => (
+                      <div key={tick} className="timeline-scale-tick" style={{ left: `${(tick / DAY_MINUTES) * 100}%` }}>
+                        <span>{toHHMM(tick)}</span>
+                      </div>
+                    ))}
                   </div>
                 </div>
-              ))}
+                <div className="timeline-grid">
+                  {rowsByLine.map((line) => (
+                    <div key={line.id} className="timeline-row">
+                      <div className="timeline-label">{line.name}</div>
+                      <div className="timeline-track">
+                        {line.orders.map((order) => {
+                          const isDropTarget =
+                            lineTimelineDragState.overOrderId === order.id && lineTimelineDragState.draggedOrderId !== order.id;
+                          return (
+                            <div
+                              key={order.id}
+                              className={`block line-order ${isDropTarget ? 'drop-target' : ''}`}
+                              style={{
+                                left: `${(order.start / DAY_MINUTES) * 100}%`,
+                                width: `${Math.max(((order.end - order.start) / DAY_MINUTES) * 100, 0.9)}%`,
+                              }}
+                              title={`${order.productName} · ${toHHMM(order.start)}-${toHHMM(order.end)}`}
+                              draggable
+                              onDragStart={(event) => startLineTimelineDrag(event, order.id)}
+                              onDragOver={(event) => onLineTimelineDragOver(event, order.id)}
+                              onDrop={(event) => dropOnLineTimeline(event, line.id, order.id)}
+                              onDragEnd={finishLineTimelineDrag}
+                            >
+                              {order.productName}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
           </section>
 
@@ -643,34 +696,48 @@ function App() {
 
           <section className="panel">
             <h2>Zeitstrahl Rührwerke</h2>
-            <div className="timeline-grid">
-              {MIXERS.map((mixer) => (
-                <div key={mixer.id} className="timeline-row">
-                  <div className="timeline-label">{mixer.name}</div>
-                  <div
-                    className={`timeline-track ${mixerDropTargetId === mixer.id ? 'mixer-drop-active' : ''}`}
-                    onDragOver={(event) => onMixerDragOver(event, mixer.id)}
-                    onDragLeave={clearMixerDropTarget}
-                    onDrop={(event) => onMixerDrop(event, mixer.id)}
-                  >
-                    {timelineBlocks
-                      .filter((reservation) => reservation.mixerId === mixer.id)
-                      .map((reservation) => (
-                        <div
-                          key={reservation.id}
-                          className={`block ${reservation.type} ${conflictBlockIds.includes(reservation.id) ? 'conflict' : ''}`}
-                          style={{
-                            left: `${(reservation.start / DAY_MINUTES) * 100}%`,
-                            width: `${((reservation.end - reservation.start) / DAY_MINUTES) * 100}%`,
-                          }}
-                          title={`Auftrag ${reservation.orderId} · ${toHHMM(reservation.start)}-${toHHMM(reservation.end)}`}
-                        >
-                          {reservation.type === 'manufacturing' ? 'H' : 'A'}
-                        </div>
-                      ))}
+            <div className="timeline-scroll">
+              <div className="timeline-scroll-inner" style={{ width: `${timelineZoom * 100}%` }}>
+                <div className="timeline-scale-row">
+                  <div className="timeline-scale-label">Skala</div>
+                  <div className="timeline-scale-track">
+                    {timelineScaleTicks.map((tick) => (
+                      <div key={tick} className="timeline-scale-tick" style={{ left: `${(tick / DAY_MINUTES) * 100}%` }}>
+                        <span>{toHHMM(tick)}</span>
+                      </div>
+                    ))}
                   </div>
                 </div>
-              ))}
+                <div className="timeline-grid">
+                  {MIXERS.map((mixer) => (
+                    <div key={mixer.id} className="timeline-row">
+                      <div className="timeline-label">{mixer.name}</div>
+                      <div
+                        className={`timeline-track ${mixerDropTargetId === mixer.id ? 'mixer-drop-active' : ''}`}
+                        onDragOver={(event) => onMixerDragOver(event, mixer.id)}
+                        onDragLeave={clearMixerDropTarget}
+                        onDrop={(event) => onMixerDrop(event, mixer.id)}
+                      >
+                        {timelineBlocks
+                          .filter((reservation) => reservation.mixerId === mixer.id)
+                          .map((reservation) => (
+                            <div
+                              key={reservation.id}
+                              className={`block ${reservation.type} ${conflictBlockIds.includes(reservation.id) ? 'conflict' : ''}`}
+                              style={{
+                                left: `${(reservation.start / DAY_MINUTES) * 100}%`,
+                                width: `${((reservation.end - reservation.start) / DAY_MINUTES) * 100}%`,
+                              }}
+                              title={`Auftrag ${reservation.orderId} · ${toHHMM(reservation.start)}-${toHHMM(reservation.end)}`}
+                            >
+                              {reservation.type === 'manufacturing' ? 'H' : 'A'}
+                            </div>
+                          ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
           </section>
 
