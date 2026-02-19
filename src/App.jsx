@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createProduct, deleteProduct, getProducts, updateProduct } from './services/products';
-import { getLineSettings, saveLineSettings } from './services/lineSettings';
+import { createDefaultLineSettings, getLineSettings, saveLineSettings } from './services/lineSettings';
 
 const FILL_LINES = [
   { id: 'L1', name: 'Abfülllinie 1' },
@@ -27,6 +27,7 @@ const DEFAULT_FILL_RATE_BY_BOTTLE = {
   '1L': 30,
   '5L': 45,
 };
+const SCHEDULE_STORAGE_KEY = 'rwps.schedule.v1';
 const DAY_MINUTES = 24 * 60;
 const TIMELINE_ZOOM_MIN = 1;
 const TIMELINE_ZOOM_MAX = 4;
@@ -95,6 +96,42 @@ function normalizeLineSettingsValue(value) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : NaN;
 }
 
+function normalizeOrderOnLoad(rawOrder, lineSettings) {
+  if (!rawOrder || typeof rawOrder !== 'object') return null;
+
+  const volumeLiters = Number(rawOrder.volumeLiters);
+  const start = Number(rawOrder.start);
+  const end = Number(rawOrder.end);
+  const manufacturingDuration = Number(rawOrder.manufacturingDuration);
+
+  if (!Number.isFinite(volumeLiters) || volumeLiters <= 0) return null;
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null;
+  if (!Number.isInteger(manufacturingDuration) || manufacturingDuration <= 0) return null;
+
+  const lineId = FILL_LINES.some((line) => line.id === rawOrder.lineId) ? rawOrder.lineId : FILL_LINES[0].id;
+  const bottleSize = BOTTLE_SIZES.includes(rawOrder.bottleSize) ? rawOrder.bottleSize : '1L';
+  const fillRate = Number(lineSettings?.[lineId]?.[bottleSize]);
+  const fallbackRate = Number(DEFAULT_FILL_RATE_BY_BOTTLE[bottleSize]);
+  const effectiveRate = Number.isFinite(fillRate) && fillRate > 0 ? fillRate : fallbackRate;
+
+  const loadedFillDuration = Number(rawOrder.fillDuration);
+  const fillDuration =
+    Number.isInteger(loadedFillDuration) && loadedFillDuration > 0
+      ? loadedFillDuration
+      : Math.max(1, Math.ceil(volumeLiters / effectiveRate));
+
+  return {
+    ...rawOrder,
+    id: rawOrder.id || crypto.randomUUID(),
+    lineId,
+    bottleSize,
+    fillDuration,
+    volumeLiters,
+    start,
+    end,
+  };
+}
+
 function App() {
   const [activeTab, setActiveTab] = useState('planung');
   const [products, setProducts] = useState([]);
@@ -118,10 +155,10 @@ function App() {
     startTime: '08:00',
   });
   const [lineSettings, setLineSettings] = useState(() =>
-    getLineSettings(FILL_LINES, BOTTLE_SIZES, DEFAULT_FILL_RATE_BY_BOTTLE),
+    createDefaultLineSettings(FILL_LINES, BOTTLE_SIZES, DEFAULT_FILL_RATE_BY_BOTTLE),
   );
   const [lineSettingsDraft, setLineSettingsDraft] = useState(() =>
-    getLineSettings(FILL_LINES, BOTTLE_SIZES, DEFAULT_FILL_RATE_BY_BOTTLE),
+    createDefaultLineSettings(FILL_LINES, BOTTLE_SIZES, DEFAULT_FILL_RATE_BY_BOTTLE),
   );
   const [lineSettingsError, setLineSettingsError] = useState('');
   const [lineSettingsInfo, setLineSettingsInfo] = useState('');
@@ -145,6 +182,44 @@ function App() {
       setOrderForm((prev) => ({ ...prev, productId: loaded[0]?.id ?? '' }));
     });
   }, []);
+
+  useEffect(() => {
+    const loadedSettings = getLineSettings(FILL_LINES, BOTTLE_SIZES, DEFAULT_FILL_RATE_BY_BOTTLE);
+    setLineSettings(loadedSettings);
+    setLineSettingsDraft(loadedSettings);
+
+    const rawSchedule = localStorage.getItem(SCHEDULE_STORAGE_KEY);
+    if (!rawSchedule) return;
+
+    try {
+      const parsed = JSON.parse(rawSchedule);
+      const normalizedOrders = Array.isArray(parsed?.orders)
+        ? parsed.orders.map((entry) => normalizeOrderOnLoad(entry, loadedSettings)).filter(Boolean)
+        : [];
+
+      const normalizedReservations = Array.isArray(parsed?.mixerReservations)
+        ? parsed.mixerReservations.filter(
+            (entry) =>
+              entry &&
+              typeof entry === 'object' &&
+              typeof entry.orderId === 'string' &&
+              Number.isFinite(Number(entry.start)) &&
+              Number.isFinite(Number(entry.end)) &&
+              Number(entry.end) > Number(entry.start),
+          )
+        : [];
+
+      setOrders(normalizedOrders);
+      setMixerReservations(normalizedReservations);
+    } catch {
+      setOrders([]);
+      setMixerReservations([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem(SCHEDULE_STORAGE_KEY, JSON.stringify({ orders, mixerReservations }));
+  }, [orders, mixerReservations]);
 
   useEffect(() => {
     setLineSettingsDraft(lineSettings);

@@ -1,6 +1,6 @@
-const STORAGE_KEY = 'rwps.line-settings.v1';
+export const LINE_SETTINGS_STORAGE_KEY = 'rwps.line-settings.v1';
 
-function createDefaultLineSettings(fillLines, bottleSizes, defaultFillRateByBottle) {
+export function createDefaultLineSettings(fillLines, bottleSizes, defaultFillRateByBottle) {
   return fillLines.reduce((acc, line) => {
     acc[line.id] = bottleSizes.reduce((lineAcc, bottleSize) => {
       lineAcc[bottleSize] = Number(defaultFillRateByBottle[bottleSize]);
@@ -23,22 +23,33 @@ function sanitizeLineSettings(raw, fillLines, bottleSizes, defaultFillRateByBott
   }, {});
 }
 
+function persistLineSettings(lineSettings) {
+  localStorage.setItem(LINE_SETTINGS_STORAGE_KEY, JSON.stringify(lineSettings));
+}
+
 export function getLineSettings(fillLines, bottleSizes, defaultFillRateByBottle) {
-  const raw = localStorage.getItem(STORAGE_KEY);
+  const defaults = createDefaultLineSettings(fillLines, bottleSizes, defaultFillRateByBottle);
+  const raw = localStorage.getItem(LINE_SETTINGS_STORAGE_KEY);
   if (!raw) {
-    return createDefaultLineSettings(fillLines, bottleSizes, defaultFillRateByBottle);
+    persistLineSettings(defaults);
+    return defaults;
   }
 
   try {
     const parsed = JSON.parse(raw);
-    return sanitizeLineSettings(parsed, fillLines, bottleSizes, defaultFillRateByBottle);
+    const sanitized = sanitizeLineSettings(parsed, fillLines, bottleSizes, defaultFillRateByBottle);
+    if (JSON.stringify(parsed) !== JSON.stringify(sanitized)) {
+      persistLineSettings(sanitized);
+    }
+    return sanitized;
   } catch {
-    return createDefaultLineSettings(fillLines, bottleSizes, defaultFillRateByBottle);
+    persistLineSettings(defaults);
+    return defaults;
   }
 }
 
 export async function saveLineSettings(lineSettings, fillLines, bottleSizes, defaultFillRateByBottle) {
   const sanitized = sanitizeLineSettings(lineSettings, fillLines, bottleSizes, defaultFillRateByBottle);
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(sanitized));
+  persistLineSettings(sanitized);
   return sanitized;
 }
