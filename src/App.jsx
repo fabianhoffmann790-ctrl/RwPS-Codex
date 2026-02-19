@@ -35,6 +35,12 @@ function overlaps(a, b) {
   return a.start < b.end && b.start < a.end;
 }
 
+function getOrderStatus(order) {
+  if (order.locked) return 'locked';
+  if (order.mixerId) return 'assigned';
+  return 'unassigned';
+}
+
 function createOrderBlock(order) {
   return {
     id: `order-${order.id}`,
@@ -43,6 +49,7 @@ function createOrderBlock(order) {
     start: order.start,
     end: order.end,
     type: 'order',
+    status: getOrderStatus(order),
   };
 }
 
@@ -243,6 +250,7 @@ function App() {
       start,
       end,
       mixerId: null,
+      locked: false,
     };
 
     setOrders((prev) => [...prev, newOrder].sort((a, b) => a.start - b.start));
@@ -261,6 +269,11 @@ function App() {
     const order = orders.find((entry) => entry.id === orderId);
     if (!order || order.mixerId) {
       setPlanError('Gewählter Auftrag ist nicht mehr offen.');
+      return false;
+    }
+
+    if (order.locked) {
+      setPlanError('Gesperrte Aufträge können nicht neu zugewiesen werden.');
       return false;
     }
 
@@ -300,12 +313,39 @@ function App() {
   };
 
   const unassignOrderFromMixer = (orderId) => {
+    const order = orders.find((entry) => entry.id === orderId);
+    if (!order || !order.mixerId) return;
+    if (order.locked) {
+      setPlanError('Gesperrte Aufträge können nicht entkoppelt werden.');
+      return;
+    }
+
     setConflictBlockIds([]);
     setOrders((prev) => prev.map((entry) => (entry.id === orderId ? { ...entry, mixerId: null } : entry)));
     setMixerReservations((prev) => prev.filter((entry) => entry.orderId !== orderId));
   };
 
+  const toggleOrderLock = (orderId) => {
+    setPlanError('');
+    setOrders((prev) => {
+      const order = prev.find((entry) => entry.id === orderId);
+      if (!order) return prev;
+      if (!order.mixerId) {
+        setPlanError('Lock ist erst nach Zuweisung zu einem Rührwerk möglich.');
+        return prev;
+      }
+      return prev.map((entry) => (entry.id === orderId ? { ...entry, locked: !entry.locked } : entry));
+    });
+  };
+
   const removeOrder = (orderId) => {
+    const order = orders.find((entry) => entry.id === orderId);
+    if (!order) return;
+    if (order.locked) {
+      setPlanError('Gesperrte Aufträge können nicht gelöscht werden.');
+      return;
+    }
+
     setConflictBlockIds([]);
     setOrders((prev) => prev.filter((entry) => entry.id !== orderId));
     setMixerReservations((prev) => prev.filter((entry) => entry.orderId !== orderId));
@@ -327,9 +367,16 @@ function App() {
         return prevOrders;
       }
 
+      const movedOrder = lineOrders[fromIndex];
+      const targetOrder = lineOrders[toIndex];
+      if (movedOrder?.locked || targetOrder?.locked) {
+        setPlanError('Gesperrte Aufträge können in der Reihenfolge nicht verschoben werden.');
+        return prevOrders;
+      }
+
       const reorderedLineOrders = [...lineOrders];
-      const [movedOrder] = reorderedLineOrders.splice(fromIndex, 1);
-      reorderedLineOrders.splice(toIndex, 0, movedOrder);
+      const [moved] = reorderedLineOrders.splice(fromIndex, 1);
+      reorderedLineOrders.splice(toIndex, 0, moved);
 
       const initialStart = lineOrders[0]?.start ?? 0;
       let cursor = initialStart;
@@ -587,14 +634,39 @@ function App() {
                         return (
                           <li
                             key={order.id}
-                            draggable
-                            className={isDropTarget ? 'drop-target' : ''}
-                            onDragStart={(event) => startLineListDrag(event, order.id)}
+                            draggable={!order.locked}
+                            className={`${getOrderStatus(order)} ${isDropTarget ? 'drop-target' : ''}`}
+                            onDragStart={(event) => !order.locked && startLineListDrag(event, order.id)}
                             onDragOver={(event) => onLineListDragOver(event, order.id)}
                             onDrop={(event) => dropOnLineList(event, line.id, order.id)}
                             onDragEnd={finishLineListDrag}
                           >
-                            <span>{order.productName}</span>
+                            <div className="line-order-header">
+                              <span>{order.productName}</span>
+                              <div className="mini-actions">
+                                <button type="button" className="danger" title="Auftrag löschen" onClick={() => removeOrder(order.id)}>
+                                  🗑
+                                </button>
+                                <button
+                                  type="button"
+                                  className="secondary"
+                                  title="Zuweisung lösen"
+                                  onClick={() => unassignOrderFromMixer(order.id)}
+                                  disabled={!order.mixerId || order.locked}
+                                >
+                                  🔓
+                                </button>
+                                <button
+                                  type="button"
+                                  className={order.locked ? '' : 'secondary'}
+                                  title="Lock"
+                                  onClick={() => toggleOrderLock(order.id)}
+                                  disabled={!order.mixerId}
+                                >
+                                  {order.locked ? '🔒' : '🔐'}
+                                </button>
+                              </div>
+                            </div>
                             <small>
                               {toHHMM(order.start)}-{toHHMM(order.end)} · {order.volumeLiters} L
                             </small>
@@ -652,14 +724,14 @@ function App() {
                           return (
                             <div
                               key={order.id}
-                              className={`block line-order ${isDropTarget ? 'drop-target' : ''}`}
+                              className={`block line-order ${getOrderStatus(order)} ${isDropTarget ? 'drop-target' : ''}`}
                               style={{
                                 left: `${(order.start / DAY_MINUTES) * 100}%`,
                                 width: `${Math.max(((order.end - order.start) / DAY_MINUTES) * 100, 0.9)}%`,
                               }}
                               title={`${lineOrderLabel} · ${toHHMM(order.start)}-${toHHMM(order.end)}`}
-                              draggable
-                              onDragStart={(event) => startLineTimelineDrag(event, order.id)}
+                              draggable={!order.locked}
+                              onDragStart={(event) => !order.locked && startLineTimelineDrag(event, order.id)}
                               onDragOver={(event) => onLineTimelineDragOver(event, order.id)}
                               onDrop={(event) => dropOnLineTimeline(event, line.id, order.id)}
                               onDragEnd={finishLineTimelineDrag}
@@ -752,10 +824,13 @@ function App() {
                       >
                         {timelineBlocks
                           .filter((reservation) => reservation.mixerId === mixer.id)
-                          .map((reservation) => (
+                          .map((reservation) => {
+                            const relatedOrder = orders.find((entry) => entry.id === reservation.orderId);
+                            const blockStatus = relatedOrder ? getOrderStatus(relatedOrder) : 'assigned';
+                            return (
                             <div
                               key={reservation.id}
-                              className={`block ${reservation.type} ${conflictBlockIds.includes(reservation.id) ? 'conflict' : ''}`}
+                              className={`block ${reservation.type} ${blockStatus} ${conflictBlockIds.includes(reservation.id) ? 'conflict' : ''}`}
                               style={{
                                 left: `${(reservation.start / DAY_MINUTES) * 100}%`,
                                 width: `${((reservation.end - reservation.start) / DAY_MINUTES) * 100}%`,
@@ -764,7 +839,8 @@ function App() {
                             >
                               {reservation.type === 'manufacturing' ? 'H' : 'A'}
                             </div>
-                          ))}
+                          );
+                          })}
                       </div>
                     </div>
                   ))}
@@ -832,10 +908,23 @@ function App() {
                     <td>
                       <div className="actions">
                         {order.mixerId ? (
-                          <button type="button" className="secondary" onClick={() => unassignOrderFromMixer(order.id)}>
+                          <button
+                            type="button"
+                            className="secondary"
+                            onClick={() => unassignOrderFromMixer(order.id)}
+                            disabled={order.locked}
+                          >
                             Entkoppeln
                           </button>
                         ) : null}
+                        <button
+                          type="button"
+                          className={order.locked ? '' : 'secondary'}
+                          onClick={() => toggleOrderLock(order.id)}
+                          disabled={!order.mixerId}
+                        >
+                          {order.locked ? 'Locked' : 'Lock'}
+                        </button>
                         <button type="button" className="danger" onClick={() => removeOrder(order.id)}>
                           Löschen
                         </button>
