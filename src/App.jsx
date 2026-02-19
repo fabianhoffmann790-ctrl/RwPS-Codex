@@ -222,7 +222,7 @@ function App() {
     setSelectedOrderId(newOrder.id);
   };
 
-  const assignOrderToMixerByDrop = (orderId, mixerId) => {
+  const assignOrderToMixer = (orderId, mixerId) => {
     setPlanError('');
     setConflictBlockIds([]);
     if (!orderId) {
@@ -247,23 +247,28 @@ function App() {
 
     if (manufacturingBlock.start < 0) {
       setPlanError('Zuweisung nicht möglich: Herstellungszeitraum liegt vor 00:00 Uhr.');
+      setConflictBlockIds([manufacturingBlock.id]);
       return false;
     }
 
     const mixerBlocks = timelineBlocks.filter((entry) => entry.mixerId === mixerId);
-    if (mixerBlocks.some((entry) => overlaps(manufacturingBlock, entry))) {
+    const conflictingMixerBlocks = mixerBlocks.filter((entry) => overlaps(manufacturingBlock, entry));
+    if (conflictingMixerBlocks.length > 0) {
       setPlanError('Zuweisung nicht möglich: Herstellungsblock kollidiert mit vorhandener Rührwerks-Reservierung.');
+      setConflictBlockIds([manufacturingBlock.id, ...conflictingMixerBlocks.map((entry) => entry.id)]);
       return false;
     }
 
     setOrders((prev) => prev.map((entry) => (entry.id === orderId ? { ...entry, mixerId } : entry)));
     setMixerReservations((prev) => [...prev, manufacturingBlock]);
-    setSelectedOrderId('');
+    setSelectedOrderId((prev) => (prev === orderId ? '' : prev));
     return true;
   };
 
+  const assignOrderToMixerByDrop = (orderId, mixerId) => assignOrderToMixer(orderId, mixerId);
+
   const tryAssignOrderToMixer = () => {
-    assignOrderToMixerByDrop(selectedOrderId, selectedMixerId);
+    assignOrderToMixer(selectedOrderId, selectedMixerId);
   };
 
   const unassignOrderFromMixer = (orderId) => {
