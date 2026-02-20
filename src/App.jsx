@@ -1,6 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createProduct, deleteProduct, getProducts, updateProduct } from './services/products';
 import { createDefaultLineSettings, getLineSettings, saveLineSettings } from './services/lineSettings';
+import {
+  convertSessionToOrders,
+  createIstSession,
+  deleteOrder as deleteIstOrder,
+  publish as publishIst,
+  saveRestQty,
+  undo as undoIst,
+} from './services/istSession';
 
 const FILL_LINES = [
   { id: 'L1', name: 'Abfülllinie 1' },
@@ -166,6 +174,11 @@ function App() {
   const [lineTimelineDragState, setLineTimelineDragState] = useState({ draggedOrderId: null, overOrderId: null });
   const [mixerDropTargetId, setMixerDropTargetId] = useState(null);
   const [timelineZoom, setTimelineZoom] = useState(1);
+  const [istSession, setIstSession] = useState(null);
+  const [istError, setIstError] = useState('');
+  const [istInfo, setIstInfo] = useState('');
+  const [istLineId, setIstLineId] = useState(FILL_LINES[0].id);
+  const [restQtyDrafts, setRestQtyDrafts] = useState({});
 
   const openOrders = useMemo(() => orders.filter((entry) => !entry.mixerId), [orders]);
   const timelineBlocks = useMemo(
@@ -224,6 +237,31 @@ function App() {
   useEffect(() => {
     setLineSettingsDraft(lineSettings);
   }, [lineSettings]);
+
+  useEffect(() => {
+    if (activeTab !== 'ist') return;
+    setIstSession((prev) => {
+      if (prev?.dirty) return prev;
+      return createIstSession({
+        date: new Date().toISOString().slice(0, 10),
+        orders,
+        mixerReservations,
+      });
+    });
+    setIstError('');
+    setIstInfo('');
+  }, [activeTab, orders, mixerReservations]);
+
+  useEffect(() => {
+    if (!istSession) return;
+    const nextDrafts = {};
+    istSession.lines.forEach((line) => {
+      line.positions.forEach((position) => {
+        nextDrafts[position.orderId] = String(position.restQty);
+      });
+    });
+    setRestQtyDrafts(nextDrafts);
+  }, [istSession]);
 
   const reloadProducts = async () => {
     const loaded = await getProducts();
@@ -686,6 +724,91 @@ function App() {
     setMixerDropTargetId(null);
   };
 
+  const activeIstLine = istSession?.lines.find((line) => line.lineId === istLineId) ?? null;
+
+  const onChangeRestQtyDraft = (orderId, value) => {
+    setRestQtyDrafts((prev) => ({ ...prev, [orderId]: value }));
+  };
+
+  const onSaveRestQty = (orderId) => {
+    if (!istSession) return;
+    setIstError('');
+    setIstInfo('');
+
+    try {
+      const next = saveRestQty(istSession, {
+        orderId,
+        restQty: restQtyDrafts[orderId],
+        expectedVersion: istSession.version,
+        mixerReservations,
+      });
+      setIstSession(next);
+      setIstInfo('Änderung gespeichert. Timeline und Konfliktstatus wurden aktualisiert.');
+    } catch (error) {
+      if (error?.message === 'IST-VAL-001') {
+        setIstError('Restmenge muss eine Zahl >= 0 sein.');
+        return;
+      }
+      if (error?.message === 'IST-VAL-002') {
+        setIstError('Restmenge darf Startmenge nicht überschreiten.');
+        return;
+      }
+      setIstError('Änderung konnte nicht gespeichert werden. Bitte erneut versuchen.');
+    }
+  };
+
+  const onDeleteIstOrder = (orderId) => {
+    if (!istSession) return;
+    const confirmed = window.confirm(
+      'Auftrag wirklich löschen? Dieser Schritt kann per Undo rückgängig gemacht werden.',
+    );
+    if (!confirmed) return;
+
+    setIstError('');
+    setIstInfo('');
+
+    try {
+      const next = deleteIstOrder(istSession, {
+        orderId,
+        expectedVersion: istSession.version,
+        mixerReservations,
+      });
+      setIstSession(next);
+      setIstInfo('Auftrag wurde gelöscht. Positionen wurden nachgerückt.');
+    } catch {
+      setIstError('Änderung konnte nicht gespeichert werden. Bitte erneut versuchen.');
+    }
+  };
+
+  const onUndoIst = () => {
+    if (!istSession) return;
+    const next = undoIst(istSession, { mixerReservations });
+    setIstSession(next);
+    setIstError('');
+    setIstInfo('Letzte Änderung wurde rückgängig gemacht.');
+  };
+
+  const onPublishIst = () => {
+    if (!istSession) return;
+    setIstError('');
+    setIstInfo('');
+
+    try {
+      publishIst(istSession, { expectedVersion: istSession.version });
+      const publishedOrders = convertSessionToOrders(istSession, orders);
+      setOrders(publishedOrders);
+      setMixerReservations((prev) => prev.filter((entry) => publishedOrders.some((order) => order.id === entry.orderId)));
+      setIstSession((prev) => (prev ? { ...prev, dirty: false, canUpdatePlanner: false } : prev));
+      setIstInfo('IST-Änderungen wurden in den Hauptplaner übernommen.');
+    } catch (error) {
+      if (error?.message === 'IST-CONF-001') {
+        setIstError('Rührwerksüberschneidung erkannt. „Planer aktualisieren“ ist gesperrt.');
+        return;
+      }
+      setIstError('Änderung konnte nicht gespeichert werden. Bitte erneut versuchen.');
+    }
+  };
+
   return (
     <div className="page">
       <header>
@@ -699,6 +822,13 @@ function App() {
           onClick={() => setActiveTab('planung')}
         >
           Planung
+        </button>
+        <button
+          type="button"
+          className={activeTab === 'ist' ? 'tab-active' : ''}
+          onClick={() => setActiveTab('ist')}
+        >
+          IST
         </button>
         <button
           type="button"
@@ -1125,6 +1255,107 @@ function App() {
                 ) : null}
               </tbody>
             </table>
+          </section>
+        </>
+      ) : activeTab === 'ist' ? (
+        <>
+          <section className="panel">
+            <h2>IST</h2>
+            <p>Restmengen werden immer auf 06:00 neu geankert. Nach jeder Änderung erfolgt eine Konfliktprüfung.</p>
+            <div className="ist-line-tabs">
+              {FILL_LINES.map((line) => (
+                <button
+                  key={line.id}
+                  type="button"
+                  className={istLineId === line.id ? 'tab-active' : 'secondary'}
+                  onClick={() => setIstLineId(line.id)}
+                >
+                  {line.name}
+                </button>
+              ))}
+            </div>
+          </section>
+
+          <section className="panel">
+            <h2>Linie {istLineId}</h2>
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Position</th>
+                  <th>PA-Nr.</th>
+                  <th>Status</th>
+                  <th>Startmenge</th>
+                  <th>Restmenge</th>
+                  <th>Dauer</th>
+                  <th>Zeit</th>
+                  <th>Locked</th>
+                  <th>Aktionen</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(activeIstLine?.positions ?? []).slice(0, 3).map((position) => (
+                  <tr key={position.orderId}>
+                    <td>Pos.{position.position}</td>
+                    <td>{position.productionOrderNumber}</td>
+                    <td>{position.status}</td>
+                    <td>{position.startQty}</td>
+                    <td>
+                      <input
+                        type="number"
+                        min="0"
+                        step="1"
+                        value={restQtyDrafts[position.orderId] ?? ''}
+                        onChange={(event) => onChangeRestQtyDraft(position.orderId, event.target.value)}
+                      />
+                    </td>
+                    <td>{position.durationMin} min</td>
+                    <td>
+                      {position.startAt} - {position.endAt}
+                    </td>
+                    <td>{position.locked ? 'Ja' : 'Nein'}</td>
+                    <td>
+                      <div className="actions">
+                        <button type="button" onClick={() => onSaveRestQty(position.orderId)}>
+                          Speichern
+                        </button>
+                        <button type="button" className="danger" onClick={() => onDeleteIstOrder(position.orderId)}>
+                          Löschen
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+                {!activeIstLine?.positions?.length ? (
+                  <tr>
+                    <td colSpan="9">Keine Aufträge in der gewählten Linie.</td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </section>
+
+          <section className="panel">
+            <div className="ist-footer-actions">
+              <p className={istSession?.hasConflicts ? 'error' : ''}>
+                {istSession?.hasConflicts
+                  ? 'Rührwerksüberschneidung erkannt. Bitte Konflikt lösen, bevor der Hauptplaner aktualisiert werden kann.'
+                  : 'Keine Überschneidung. Änderungen können in den Hauptplaner übernommen werden.'}
+              </p>
+              <div className="actions">
+                <button type="button" className="secondary" onClick={onUndoIst} disabled={!istSession?.history?.length}>
+                  Undo
+                </button>
+                <button
+                  type="button"
+                  onClick={onPublishIst}
+                  disabled={!(istSession?.canUpdatePlanner && istSession?.dirty)}
+                >
+                  Planer aktualisieren
+                </button>
+              </div>
+            </div>
+            {istError ? <p className="error">{istError}</p> : null}
+            {istInfo ? <p>{istInfo}</p> : null}
           </section>
         </>
       ) : activeTab === 'linien-einstellung' ? (
